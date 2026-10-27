@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 1 章 · 什么是 Cordis — Cordis 学习指南</title>
+  <meta name="description" content="从一段普通的 main 函数出发，理解 Cordis 的插件、上下文与生命周期，以及它与传统写法的根本区别。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="01">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第一篇 · 认识 Cordis</strong><br>
+      第 1 / 12 章<br>
+      约 15 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 1 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第一篇 · 认识 Cordis</span><span class="dot"></span>
+            <span class="kicker-muted">第 01 章</span>
+          </div>
+          <h1>什么是 Cordis</h1>
+          <p class="lead">
+            Cordis 不是“又一个 Web 框架”，而是一种组织程序的方式：把“我来创建、我来调用、我来清理”，
+            换成“我声明需要什么、我提供什么、用完请撤销”。这一章我们先不背概念，只从一段普通的
+            <code>main</code> 函数出发，看看这种换法到底换掉了什么。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 零基础</span>
+            <span class="chip"><strong>阅读</strong> 约 15 分钟</span>
+            <span class="chip"><strong>前置</strong> 会一点 JavaScript</span>
+            <span class="chip"><strong>关键词</strong> 插件 · 上下文 · 生命周期</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>说出 Cordis 与“把所有东西写在 main 里”的根本区别；</li>
+            <li>读懂一个最小可运行的 Cordis 程序；</li>
+            <li>用六个关键词描述 Cordis 的组成；</li>
+            <li>判断 Cordis <strong>不是</strong>什么，避免用错场景。</li>
+          </ul>
+        </div>
+
+        <div class="callout info">
+          <span class="label">一句话定义</span>
+          <p>
+            Cordis 是一个用 TypeScript 编写的<strong>插件框架</strong>：它把应用拆成可挂载的插件，
+            用 <strong>Context</strong> 管理服务，用 <strong>Fiber</strong> 管理每个插件的生命周期，
+            用 <strong>Event</strong> 让插件之间不必互相认识。
+          </p>
+        </div>
+
+        <h2 id="start">先看一段没有 Cordis 的程序</h2>
+        <p>
+          假设你要写一个极简的待办清单。最自然的写法，是建一个 <code>main.ts</code>，从头到尾把事做完：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">main.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { readFile, writeFile } from 'node:fs/promises'
+
+const FILE = './todos.json'
+const todos = JSON.parse(await readFile(FILE, 'utf8').catch(() =&gt; '[]'))
+
+async function add(title: string) {
+  todos.push({ title, done: false })
+  await writeFile(FILE, JSON.stringify(todos, null, 2))
+  console.log(`added: ${title}`)
+}
+
+const command = process.argv[2]
+if (command === 'add') {
+  await add(process.argv[3] ?? 'untitled')
+} else {
+  console.log(todos)
+}</code></pre>
+        </div>
+
+        <p>运行它，输出完全符合预期：</p>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>$ node --import tsx main.ts add "买牛奶"
+added: 买牛奶</code></pre>
+        </div>
+
+        <p>
+          这段代码<strong>没有问题</strong>。它直白、好读、好调试，二十行就能跑。任何一上来就告诉你“这样写不对”的框架，
+          都值得警惕。
+        </p>
+        <p>
+          Cordis 要解决的不是这二十行，而是<strong>它之后的事</strong>。
+        </p>
+
+        <h2 id="grow">当需求长大，main 开始变形</h2>
+        <p>
+          产品经理来了。你要加：可切换的存储（本地文件 / 数据库）、操作统计、一个 HTTP 接口、按用户隔离数据、
+          运行中改配置不重启、以及让第三方写扩展。半年后，<code>main.ts</code> 可能长成这样：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">main.ts（示意，已经很难维护）</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { openDatabase } from './db.ts'
+import { Auth } from './auth.ts'
+import { Stats } from './stats.ts'
+import { createServer } from './server.ts'
+import { loadConfig } from './config.ts'
+import { migrate } from './migrate.ts'
+
+const config = await loadConfig()
+const db = await openDatabase(config.dbUrl)
+await migrate(db)
+const auth = new Auth(db, config.secret)
+const stats = new Stats(db)
+const server = createServer({ db, auth, stats })
+await server.listen(config.port)
+stats.attach(server)
+
+process.on('SIGINT', async () =&gt; {
+  await server.close()
+  await stats.flush()
+  await db.close()
+})</code></pre>
+        </div>
+
+        <p>它仍然能跑，但每次加功能，你都要在同一个文件里做四类决定：</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>你被迫做的决定</th><th>典型症状</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>创建谁</strong></td>
+                <td>所有模块都要在 main 里 <code>new</code> 一遍；想换数据库，得改 main。</td>
+              </tr>
+              <tr>
+                <td><strong>按什么顺序创建</strong></td>
+                <td><code>db</code> 必须在 <code>auth</code> 前，<code>migrate</code> 必须在 <code>auth</code> 前；顺序靠注释和记忆维持。</td>
+              </tr>
+              <tr>
+                <td><strong>什么时候清理</strong></td>
+                <td>退出时要记得关 server、flush stats、关 db；漏一个就泄漏，顺序错了就报错。</td>
+              </tr>
+              <tr>
+                <td><strong>怎么替换</strong></td>
+                <td>测试想用内存数据库，只能改 import；第三方想扩展，只能改 main 的源码。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          注意：这不是 <code>main</code> 的错，也不是“函数写多了”的错。真正的问题是——
+          <strong>所有关于“谁依赖谁、谁先启动、谁负责收尾”的知识，都集中在一个文件里，而且只存在于你的脑子里。</strong>
+        </p>
+
+        <div class="callout analogy">
+          <span class="label">类比 · 从自己拉电线到配电箱</span>
+          <p>
+            小房子里，你可以自己从电表拉一根线到灯泡。房子变大、房间变多以后，继续这么干就会变成一团乱麻。
+            更合理的做法是装一个配电箱：每个房间只说“我需要一个插座”，电工按标准把线接好；要换线路，也不必把墙砸开。
+            Cordis 的 <strong>Context</strong>，就是软件世界的配电箱。
+          </p>
+        </div>
+
+        <h2 id="inversion">换一种问法：从“我来做”到“我声明”</h2>
+        <p>
+          与其让 main 依次命令每个模块，不如让每个模块自己说清楚两件事：
+          <strong>我需要什么</strong>，以及<strong>我能提供什么</strong>。剩下的编排工作，交给框架。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>传统写法</th><th>Cordis 的写法</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>我在 main 里 <code>new Database()</code></td>
+                <td>我声明：我需要一个叫 <code>db</code> 的服务</td>
+              </tr>
+              <tr>
+                <td>我手动保证 db 先于 auth 初始化</td>
+                <td>我说：没有 <code>db</code> 就別启动我；有了再叫我</td>
+              </tr>
+              <tr>
+                <td>退出时我记得调用 <code>db.close()</code></td>
+                <td>我注册时交出一个“撤销函数”，卸载时框架替我调用</td>
+              </tr>
+              <tr>
+                <td>换实现就改 import 和 new</td>
+                <td>换掉提供者即可，使用方一行不用改</td>
+              </tr>
+              <tr>
+                <td>要测试就 mock 整个 main</td>
+                <td>在子上下文里换一个测试用提供者</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          这种“把控制权交给框架、自己只做声明”的思路，在软件工程里叫
+          <strong>控制反转</strong>（Inversion of Control，IoC）。Cordis 把它具体化成了几个可以操作的部件：
+          上下文、插件、Fiber、服务、事件、Effect。
+        </p>
+
+        <h2 id="minimal">最小可运行的 Cordis 程序</h2>
+        <p>
+          先别管上面那些名词。下面是一个完整、可运行的 Cordis 程序，只有十几行：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">hello.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const ctx = new Context()
+
+const fiber = ctx.plugin((ctx) =&gt; {
+  console.log('hello from a plugin')
+
+  ctx.effect(() =&gt; {
+    console.log('plugin loaded')
+    return () =&gt; console.log('plugin disposed')
+  })
+})
+
+await fiber
+await fiber.dispose()</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>$ node --import tsx hello.ts
+hello from a plugin
+plugin loaded
+plugin disposed</code></pre>
+        </div>
+
+        <p class="small">
+          代码里的 <code>@deepseek-ai/cordis</code> 是本仓库 vendor 后的包名；上游写作 <code>cordis</code>，
+          API 完全相同。后文统一使用本仓库的包名，遇到网上文章时替换即可。
+        </p>
+
+        <p>逐行拆开看：</p>
+        <ul>
+          <li><code>new Context()</code> 创建<strong>根上下文</strong>。它是整个应用的容器，内置了日志、事件、插件注册表等基础服务。</li>
+          <li><code>ctx.plugin(fn)</code> 把一个函数<strong>挂载</strong>为插件。Cordis 会调用这个函数，并把一个属于该插件的子上下文传进去。</li>
+          <li><code>ctx.effect(...)</code> 登记一件“可以被撤销的事”。函数体立刻执行；它返回的函数，会在插件卸载时执行。</li>
+          <li><code>await fiber</code> 等这次挂载稳定（没有正在进行的初始化）。注意：缺依赖时插件会停在 PENDING，<code>await</code> 也会立即返回，并不代表已经 ACTIVE。</li>
+          <li><code>await fiber.dispose()</code> 卸载插件：先执行 Effect 的清理函数，再释放它注册过的所有东西。</li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="label">注意 · 这不是普通的回调</span>
+          <p>
+            你可能会说：“<code>ctx.plugin(fn)</code> 不就是传个回调吗？”表面上是，区别在于<strong>所有权</strong>：
+            这个回调里通过 <code>ctx</code> 注册的监听器、服务、定时器，全部记在返回的 fiber 名下。
+            fiber 一卸载，它们自动撤销。普通回调没有这层归属关系，清理得靠你自己。
+          </p>
+        </div>
+
+        <h3>如果你不熟悉这些 TypeScript 语法</h3>
+        <p>示例里会出现三种“看起来像 JavaScript、但又不是”的写法，先认识一下即可：</p>
+        <ul>
+          <li><strong>类型注解</strong>：<code>ctx: Context</code> 只是告诉编辑器“ctx 是 Context 类型”，运行时会被完全擦除，不会多出任何代码。</li>
+          <li><strong><code>import type</code></strong>：只导入类型，编译后整行消失。因此一个文件可以“只依赖类型”而不产生运行时依赖。</li>
+          <li><strong>声明合并</strong>：<code>declare module '@deepseek-ai/cordis' { ... }</code> 往已有接口里追加字段，让 <code>ctx.myService</code> 获得类型。它不生成运行时代码。</li>
+        </ul>
+
+        <h2 id="keywords">六个关键词，先混个脸熟</h2>
+        <p>
+          后面的章节会逐一展开。现在只需要建立一个大概的印象——它们分别在回答不同的问题：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>关键词</th><th>它回答的问题</th><th>生活类比</th><th>代码里长什么样</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Context</strong><br><span class="small">上下文</span></td>
+                <td>“能力放在哪里？”</td>
+                <td>配电箱：每个插座有名字</td>
+                <td><code>ctx.tools</code>、<code>ctx.get('db')</code></td>
+              </tr>
+              <tr>
+                <td><strong>Plugin</strong><br><span class="small">插件</span></td>
+                <td>“一段功能怎么装进去？”</td>
+                <td>可插拔的模块</td>
+                <td><code>ctx.plugin(fn)</code> 或 <code>Service</code> 子类</td>
+              </tr>
+              <tr>
+                <td><strong>Fiber</strong><br><span class="small">纤程 / 运行实例</span></td>
+                <td>“这次挂载归谁管？什么时候卸载？”</td>
+                <td>插头 + 租约</td>
+                <td><code>const fiber = ctx.plugin(...)</code></td>
+              </tr>
+              <tr>
+                <td><strong>Service</strong><br><span class="small">服务</span></td>
+                <td>“一项能力怎么被别处使用？”</td>
+                <td>带名字的插座</td>
+                <td><code>ctx.tools.register(...)</code></td>
+              </tr>
+              <tr>
+                <td><strong>Event</strong><br><span class="small">事件</span></td>
+                <td>“发生了某事，怎么通知所有关心的人？”</td>
+                <td>广播</td>
+                <td><code>ctx.emit('todo/added', todo)</code></td>
+              </tr>
+              <tr>
+                <td><strong>Effect</strong><br><span class="small">副作用 / 可撤销注册</span></td>
+                <td>“注册了东西，怎么保证收得回来？”</td>
+                <td>登记表 + 反注册</td>
+                <td><code>ctx.effect(() =&gt; () =&gt; cleanup())</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          这六个词不是六个孤立的功能，而是一条链：
+          <strong>插件</strong>挂载后得到一个 <strong>Fiber</strong>；插件通过 <strong>Context</strong> 提供或获取 <strong>Service</strong>，
+          用 <strong>Event</strong> 广播消息；所有注册都作为 <strong>Effect</strong> 记在 Fiber 名下，卸载时统一撤销。
+        </p>
+
+        <h2 id="not">Cordis 不是什么</h2>
+        <p>把边界说清楚，比堆定义更有用：</p>
+        <ul>
+          <li><strong>不是 Web 框架。</strong> 它不带路由、HTTP 解析、模板引擎。你可以用 Cordis 组织一个 Web 应用，但 Web 能力来自别的插件。</li>
+          <li><strong>不是打包器或编译器。</strong> 它不处理 <code>.ts</code> 到 <code>.js</code> 的转换；示例里的 <code>tsx</code> 是另一个工具。</li>
+          <li><strong>不是“必须用 TypeScript”。</strong> 运行时是普通 JavaScript；TypeScript 只是让服务名和事件名在编译期可检查。</li>
+          <li><strong>不是 DeepSeek Harness 专属。</strong> Harness 只是它最大的使用者之一；Koishi 等项目也使用同一套架构。</li>
+          <li><strong>不是银弹。</strong> 十几行的一次性脚本、纯算法库、对启动体积极度敏感的 CLI，用 Cordis 往往得不偿失。第 10 章会认真讨论代价。</li>
+        </ul>
+
+        <h2 id="history">它从哪里来</h2>
+        <p>
+          Cordis 由 <strong>Shigma</strong> 开发，长期作为开源聊天机器人框架 <strong>Koishi</strong> 的底层架构。
+          Koishi 于 2020 年发布第一个正式版本，插件市场里有上千个插件；这种“大量第三方插件 + 可热插拔”的需求，
+          正是 Cordis 的设计土壤。
+        </p>
+        <p>
+          DeepSeek Harness 把 Cordis 4.x <strong>vendor</strong>（复制进自己的仓库，而不是从 npm 安装）作为整个
+          agent runtime 的地基：工具、模型适配器、文件访问，甚至 agent loop 本身，都是挂在这个框架上的插件。
+          这也是为什么你在本仓库里看到的是 <code>@deepseek-ai/cordis</code>，而不是 <code>cordis</code>。
+        </p>
+
+        <div class="diagram">
+          <div class="flow">
+            <div class="flow-node"><b>Koishi</b><small>2020 年发布，大量第三方插件</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>Cordis</b><small>从机器人内核中抽出的插件框架</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>Cordis 4</b><small>Fiber、Effect、类型化事件</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node accent"><b>DeepSeek Harness</b><small>vendor 进来，作为 agent 运行时底座</small></div>
+          </div>
+          <figcaption>一条大致的演化脉络。具体版本时间以官方仓库为准；这里只需要知道：它不是为演示而生的玩具。</figcaption>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>Cordis 是<strong>插件框架</strong>，不是 Web 框架；它管理的是“能力如何组合与拆除”，不是业务逻辑。</li>
+            <li>它把 main 里的“创建、排序、清理、替换”换成了<strong>声明依赖 + 注册 Effect + 按名字寻址</strong>。</li>
+            <li>一次 <code>ctx.plugin()</code> 产生一个 <strong>Fiber</strong>；插件注册的一切都归这个 Fiber 所有。</li>
+            <li><code>Context</code> 是能力容器，<code>Service</code> 是具名能力，<code>Event</code> 是广播，<code>Effect</code> 是可撤销注册。</li>
+            <li>小脚本不必用 Cordis；它的价值随“插件数量、替换需求、生命周期复杂度”增长。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>Cordis 帮你管理的核心东西是什么？是业务逻辑吗？</summary>
+            <div class="answer">
+              <p>
+                不是业务逻辑，而是<strong>能力之间的依赖关系与生命周期</strong>：谁需要谁、什么时候启动、注册了什么、什么时候撤销。
+                业务仍然由你的插件实现。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary><code>ctx.plugin(fn)</code> 返回的 Fiber 有什么用？为什么不能忽略它？</summary>
+            <div class="answer">
+              <p>
+                Fiber 是这次挂载的运行实例句柄，记录状态、依赖、配置和所有 Effect。你可以 <code>await</code> 它来等待挂载稳定
+                （缺依赖时会停在 PENDING，<code>await</code> 会立即返回），调用 <code>dispose()</code> 来卸载。忽略它不会立刻出错，
+                但你会失去“精确控制这一次挂载”的能力；对于长期运行的应用，卸载和重启都依赖它。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>下面哪些场景<strong>不太</strong>值得引入 Cordis？<br>A. 十行的一次性数据清洗脚本；B. 需要第三方扩展的桌面应用；C. 一个纯数学工具库；D. 需要热更新插件的大型服务。</summary>
+            <div class="answer">
+              <p>
+                A 和 C。一次性脚本没有“组合与拆除”的复杂度；纯库应该只暴露函数，不应该强迫调用方接受一个运行时。
+                B 和 D 正是 Cordis 的典型场景：多方扩展、实现替换、生命周期管理。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 1 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

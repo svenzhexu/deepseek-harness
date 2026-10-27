@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 8 章 · Effect：注册即可撤销 — Cordis 学习指南</title>
+  <meta name="description" content="Cordis 的 Effect 机制：为什么注册要返回 disposer、ctx.effect 的四种形态、卸载顺序、异步清理与常见泄漏。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="08">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第二篇 · 核心概念</strong><br>
+      第 8 / 12 章<br>
+      约 20 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 8 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第二篇 · 核心概念</span><span class="dot"></span>
+            <span class="kicker-muted">第 08 章</span>
+          </div>
+          <h1>Effect：注册即可撤销</h1>
+          <p class="lead">
+            Cordis 的所有魔法，最后都落在一句话上：<strong>注册是可逆的副作用</strong>。
+            定时器、监听器、服务、子插件，只要是通过 <code>ctx</code> 建立的，都应该能随着 Fiber 一起撤销。
+            这一章讲清楚“怎么撤销”和“为什么你总是漏掉一个”。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 入门</span>
+            <span class="chip"><strong>阅读</strong> 约 20 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 5 章</span>
+            <span class="chip"><strong>关键词</strong> disposer · 逆序 · 泄漏</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>用 <code>ctx.effect()</code> 管理 Cordis 不认识的资源；</li>
+            <li>知道哪些 API 已经自动是 Effect，不需要你手写；</li>
+            <li>理解卸载顺序，以及异步清理的并发陷阱；</li>
+            <li>用“获取在 effect 内，释放在 disposer 里”消除大部分泄漏。</li>
+          </ul>
+        </div>
+
+        <h2 id="leak">先看一个会泄漏的插件</h2>
+        <p>
+          这是一个“心跳”插件。它每 200 毫秒打印一次，看起来完全正常：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">bad-heartbeat.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+
+export function apply(ctx: Context) {
+  setInterval(() =&gt; console.log('tick'), 200)
+}</code></pre>
+        </div>
+
+        <p>
+          正常运行时没有问题。但一旦插件被卸载——改配置、热更新、依赖消失——定时器仍然在跑。
+          再加载一次，就有两个定时器；再改一次，三个。控制台开始以 200 毫秒为单位刷屏，
+          而你已经在别的文件里找 bug 了。
+        </p>
+        <p>正确的写法，是把“申请资源”和“释放资源”放在同一个 Effect 里：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">good-heartbeat.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+
+export function apply(ctx: Context) {
+  ctx.effect(() =&gt; {
+    const timer = setInterval(() =&gt; console.log('tick'), 200)
+    return () =&gt; {
+      clearInterval(timer)
+      console.log('heartbeat stopped')
+    }
+  })
+}</code></pre>
+        </div>
+
+        <div class="callout analogy">
+          <span class="label">类比 · 借书登记</span>
+          <p>
+            借书时登记“我借了什么”，还书时按登记表逐条销账。Effect 就是那张登记表：
+            你不需要在离开图书馆时凭记忆回想借过哪些书，登记表会提醒你。
+          </p>
+        </div>
+
+        <h2 id="shape">ctx.effect 的四种形态</h2>
+        <p>
+          <code>ctx.effect(body)</code> 会立刻执行 <code>body</code>，并收集它产生的 disposer。
+          <code>body</code> 可以返回四种东西：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>返回值</th><th>写法</th><th>适合</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>一个函数</td>
+                <td><code>() =&gt; () =&gt; cleanup()</code></td>
+                <td>绝大多数同步资源：定时器、监听器、句柄。</td>
+              </tr>
+              <tr>
+                <td>函数的 Promise</td>
+                <td><code>async () =&gt; { ...; return () =&gt; cleanup() }</code></td>
+                <td>需要先异步获取资源，再返回清理函数。</td>
+              </tr>
+              <tr>
+                <td>函数的同步迭代器</td>
+                <td><code>function* () { yield dispose1; yield dispose2 }</code></td>
+                <td>一个 effect 里管理多个资源，逐个登记。</td>
+              </tr>
+              <tr>
+                <td>函数的异步迭代器</td>
+                <td><code>async function* () { ... }</code></td>
+                <td>边异步初始化边登记清理，适合复杂资源。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>日常开发中，前两种覆盖了九成场景。异步获取资源可以这样写：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">async-effect.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export function apply(ctx: Context) {
+  ctx.effect(async () =&gt; {
+    const connection = await connect()
+    console.log('connected')
+
+    return () =&gt; {
+      connection.close()
+      console.log('disconnected')
+    }
+  })
+}</code></pre>
+        </div>
+
+        <div class="callout tip">
+          <span class="label">一个重要的保证</span>
+          <p>
+            如果插件在 <code>connect()</code> 还没完成时就被卸载，Cordis 会<strong>等初始化完成，再调用清理函数</strong>，
+            而不是留下一个“连上了但没人关”的连接。这是 <code>ctx.effect(async ...)</code> 比手写 try/finally 更安全的地方。
+          </p>
+        </div>
+
+        <h2 id="builtin">这些注册已经自动是 Effect</h2>
+        <p>
+          你不需要给每个 API 都套一层 <code>ctx.effect</code>。Cordis 和 Harness 的注册类 API 已经把返回值接入了生命周期：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>API</th><th>卸载时自动撤销</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>ctx.on(event, listener)</code></td><td>事件监听器</td></tr>
+              <tr><td><code>ctx.once(event, listener)</code></td><td>一次性监听器</td></tr>
+              <tr><td><code>ctx.plugin(child)</code></td><td>子插件及其整棵子树</td></tr>
+              <tr><td><code>ctx.provide(name, value)</code></td><td>服务注册</td></tr>
+              <tr><td><code>new Service(ctx, name)</code></td><td>服务注册（构造时自动完成）</td></tr>
+              <tr><td><code>ctx.logger.exporter(exporter)</code></td><td>日志导出器</td></tr>
+              <tr><td>Harness 的 <code>ctx.tools.register(...)</code></td><td>工具注册（返回的 disposer 被接入 Fiber）</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          判断标准不是“这个 API 叫什么”，而是“它有没有把 disposer 交给 Cordis”。
+          一个设计良好的注册 API 应该返回 disposer；插件作者可以用 <code>ctx.effect</code> 把它接进来。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">wrap-disposer.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export function apply(ctx: Context) {
+  // 假设某个第三方库返回了 remove 函数
+  const remove = thirdParty.subscribe('event', handler)
+
+  // 把它接入当前 Fiber 的生命周期
+  ctx.effect(() =&gt; remove)
+}</code></pre>
+        </div>
+
+        <h2 id="order">卸载顺序：逆序，但异步会并发</h2>
+        <p>
+          Effect 按注册顺序的<strong>逆序</strong>撤销。先申请的资源后释放，符合“后进先出”的直觉：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">order.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export function apply(ctx: Context) {
+  ctx.effect(() =&gt; {
+    console.log('A setup')
+    return () =&gt; console.log('A cleanup')
+  })
+
+  ctx.effect(() =&gt; {
+    console.log('B setup')
+    return () =&gt; console.log('B cleanup')
+  })
+}</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>A setup
+B setup
+B cleanup
+A cleanup</code></pre>
+        </div>
+
+        <p>
+          但有一个关键细节：<strong>多个 Effect 的异步清理会并发开始</strong>。Cordis 会同时调用它们的 disposer，
+          再一起等待，而不是等 A 完全关完再开始 B。
+        </p>
+
+        <div class="callout warn">
+          <span class="label">顺序敏感时怎么办</span>
+          <p>
+            如果“先关 server，再关数据库”是硬性要求，不要依赖两个独立 Effect 的先后。把这两步放进<strong>同一个 disposer</strong>，
+            在里面按顺序 <code>await</code>；或者放进同一个 Effect 的生成器里，让它们作为一个整体撤销。
+            记住：<strong>逆序是启动顺序，不是完成顺序。</strong>
+          </p>
+        </div>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">ordered-cleanup.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">ctx.effect(() =&gt; {
+  const server = startServer()
+  const db = connectDatabase()
+
+  return async () =&gt; {
+    await server.close()   // 先停入口
+    await db.close()       // 再关依赖
+  }
+})</code></pre>
+        </div>
+
+        <h2 id="dispose">disposer 的调用与重复调用</h2>
+        <p>
+          <code>ctx.effect</code> 返回的 disposer 可以手动调用，用于“提前关闭某个功能”，而不必卸载整个插件。
+          重复调用是安全的：第一次之后就是 no-op。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">manual-dispose.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const dispose = ctx.effect(() =&gt; {
+  const timer = setInterval(() =&gt; console.log('tick'), 1000)
+  return () =&gt; clearInterval(timer)
+})
+
+dispose()
+dispose() // 不会报错，也不会重复清理</code></pre>
+        </div>
+
+        <p>
+          disposer 可能是异步的（例如返回了 <code>async () =&gt; ...</code>）。此时它的返回值是一个 Promise，
+          卸载流程会等待它。如果你手动调用，记得 <code>await</code>，否则后续步骤可能在资源还没释放时就开始。
+        </p>
+
+        <h2 id="scope">获取在 effect 内，释放在 disposer 里</h2>
+        <p>
+          这条规则听起来简单，却能消掉大部分泄漏：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>做法</th><th>结果</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>在 effect 外获取资源，effect 内只返回清理函数</td>
+                <td>获取失败时没有清理；获取成功但 effect 注册失败时会泄漏。</td>
+              </tr>
+              <tr>
+                <td>在 effect 内获取，在返回的 disposer 里释放</td>
+                <td>获取与释放成对；Cordis 能保证清理一定被调用。</td>
+              </tr>
+              <tr>
+                <td>把清理函数存到模块变量，等“合适的时候”调用</td>
+                <td>很容易忘记；热更新后变量指向旧实例，越积越多。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">right-way.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">ctx.effect(() =&gt; {
+  const watcher = fs.watch('./config', () =&gt; reload())
+  return () =&gt; watcher.close()
+})</code></pre>
+        </div>
+
+        <p>
+          如果资源获取本身是异步的，也把它放进 <code>async</code> effect，而不是先 <code>await</code> 再注册：
+          前者在卸载时能等初始化完成并清理，后者可能在 await 期间就被卸载，留下半成品。
+        </p>
+
+        <h2 id="timer">用官方插件代替手写定时器</h2>
+        <p>
+          如果你经常需要定时器，Cordis 官方提供了 <code>@deepseek-ai/cordis-plugin-timer</code>。
+          它把 <code>setInterval</code>、<code>setTimeout</code>、节流、防抖都包装成了 Effect：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">timer.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export const inject = ['timer']
+
+export function apply(ctx: Context) {
+  ctx.interval(() =&gt; console.log('tick'), 1000)
+  ctx.timeout(() =&gt; console.log('once'), 5000)
+}</code></pre>
+        </div>
+
+        <p>
+          注意 <code>inject: ['timer']</code>：先声明依赖，再使用 <code>ctx.interval</code>。这比自己写
+          <code>setInterval</code> 再 <code>clearInterval</code> 更不容易漏，而且语义更清楚。
+        </p>
+
+        <h2 id="diagnose">诊断：看看当前 Fiber 注册了什么</h2>
+        <p>
+          <code>fiber.getEffects()</code> 会返回当前仍然存活的 Effect 元数据树，包含标签和嵌套关系。
+          排查“到底是谁没清理”时很有用：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">effects.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export function apply(ctx: Context) {
+  ctx.on('demo/event', () =&gt; {})
+  ctx.effect(() =&gt; {
+    const timer = setInterval(() =&gt; {}, 1000)
+    return () =&gt; clearInterval(timer)
+  }, 'demo heartbeat')
+
+  console.log(ctx.fiber.getEffects())
+}</code></pre>
+        </div>
+
+        <p>
+          输出里会看到类似 <code>ctx.on("demo/event")</code>、<code>demo heartbeat</code> 的标签。
+          框架内置的注册都有可读标签，自己写的 Effect 也建议传第二个参数命名。
+        </p>
+
+        <h2 id="mistakes">五个常见错误</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>错误</th><th>后果</th><th>修正</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>只清理定时器，不清理它触发的监听器</td>
+                <td>监听器仍持有闭包，插件无法真正释放</td>
+                <td>把所有相关注册放进同一个 Effect</td>
+              </tr>
+              <tr>
+                <td>异步 disposer 没有 await</td>
+                <td>后续步骤在资源未释放时开始</td>
+                <td>在同一个 disposer 内按顺序 await</td>
+              </tr>
+              <tr>
+                <td>在已卸载的上下文里再注册</td>
+                <td>抛 <code>INACTIVE_EFFECT</code>，或注册到错误的 Fiber</td>
+                <td>注册集中在 apply 阶段；异步回调先检查状态</td>
+              </tr>
+              <tr>
+                <td>模块级保存资源句柄</td>
+                <td>热更新后旧句柄泄漏，新实例拿不到</td>
+                <td>句柄放在插件闭包里，随 Fiber 走</td>
+              </tr>
+              <tr>
+                <td>清理函数里再做耗时业务</td>
+                <td>卸载被拖慢，父插件等待</td>
+                <td>清理只做“释放”，业务动作另行安排</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout danger">
+          <span class="label">Effect 不是万能的</span>
+          <p>
+            如果第三方库自己在全局注册了单例、或者在内部启动了无法关闭的线程，<code>ctx.effect</code>
+            也救不了。它只能管理“你能拿到 disposer”的资源。遇到这种情况，要么换库，要么把整个进程作为生命周期边界。
+          </p>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>Effect 是“可撤销的注册”：body 立即执行，返回的 disposer 在卸载时执行。</li>
+            <li>支持同步函数、Promise、同步/异步迭代器；异步初始化会先完成再清理。</li>
+            <li><code>ctx.on</code>、<code>ctx.plugin</code>、<code>provide</code>、<code>Service</code> 等已经是 Effect，不必重复包装。</li>
+            <li>卸载按注册逆序开始，但多个异步 disposer 并发完成；顺序敏感时放进同一个 disposer。</li>
+            <li>获取资源在 effect 内，释放资源在 disposer 里；不要依赖模块级变量。</li>
+            <li>Effect 只能管理拿得到 disposer 的资源；无法关闭的全局状态仍然是边界。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>为什么“在 effect 外获取资源、effect 内返回清理函数”不够好？</summary>
+            <div class="answer">
+              <p>
+                因为获取可能失败，也可能在获取成功之后、Effect 注册之前发生异常或卸载，导致资源没有被登记，
+                清理函数永远不会被调用。正确做法是把获取也放进 effect body，保证“获取成功”与“登记清理”是同一个动作。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>两个 Effect 的清理都是异步的，Cordis 会等第一个完成再开始第二个吗？</summary>
+            <div class="answer">
+              <p>
+                不会。它会按逆序启动，但多个异步 disposer 会并发执行，然后一起等待。
+                如果必须串行，请把步骤放进同一个 disposer，并在其中依次 <code>await</code>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>一个插件只注册了 <code>ctx.on(...)</code>，没有写 <code>ctx.effect</code>。卸载时会泄漏吗？</summary>
+            <div class="answer">
+              <p>
+                不会。<code>ctx.on</code> 内部已经把监听器注册为当前 Fiber 的 Effect，卸载时会自动移除。
+                这也是为什么应该优先使用框架提供的注册 API，而不是自己操作底层事件发射器。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 8 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

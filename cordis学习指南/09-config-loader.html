@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 9 章 · 配置与 Loader — Cordis 学习指南</title>
+  <meta name="description" content="用 cordis.yml 组装 Cordis 应用：Config schema、Entry 字段、Loader 工作方式、分组、隔离、Include、!!js 与 HMR。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="09">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第三篇 · 组装应用</strong><br>
+      第 9 / 12 章<br>
+      约 35 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 9 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第三篇 · 组装应用</span><span class="dot"></span>
+            <span class="kicker-muted">第 09 章</span>
+          </div>
+          <h1>配置与 Loader</h1>
+          <p class="lead">
+            到上一章为止，所有插件都是我们在 <code>main.ts</code> 里手动挂载的。真实应用往往需要“换一台机器就换一套配置”、
+            “让用户自己开关功能”、“改一行配置不重启”。这一章介绍 Cordis 的可选装配层：Loader 与 <code>cordis.yml</code>。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 进阶</span>
+            <span class="chip"><strong>阅读</strong> 约 35 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 6、8 章</span>
+            <span class="chip"><strong>关键词</strong> schema · Entry · Include · HMR</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>用 schema 声明插件配置，并让错误配置在启动时失败；</li>
+            <li>读懂 <code>cordis.yml</code> 的每个字段；</li>
+            <li>用 Loader + Include 把文件变成运行中的插件树；</li>
+            <li>用分组、隔离、禁用与 HMR 管理复杂组合。</li>
+          </ul>
+        </div>
+
+        <h2 id="why-file">为什么把装配放进文件</h2>
+        <p>
+          手动挂载插件并没有错，它清晰、可调试，适合小应用和测试。但当“装哪些插件、各自什么配置”变成部署差异时，
+          写死在代码里就开始碍事：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>场景</th><th>写死在 main</th><th>配置驱动</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>开发 / 生产用不同数据库</td><td>改代码或加环境变量分支</td><td>换一份 yml / 覆盖一行配置</td></tr>
+              <tr><td>用户想关闭某个功能</td><td>改代码重新发版</td><td><code>disabled: true</code></td></tr>
+              <tr><td>插件加载失败要定位</td><td>读 main 的调用顺序</td><td>看 Entry 的 <code>id</code> 与状态</td></tr>
+              <tr><td>运行中改配置</td><td>重启进程</td><td>Include 自动重读并更新</td></tr>
+              <tr><td>第三方扩展</td><td>改 main 的源码</td><td>往 yml 里加一行</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          注意：配置文件不是“把代码变成魔法”。它仍然只是声明“装哪个模块、传什么参数”，
+          真正的逻辑、依赖和清理，仍然由插件自己负责。
+        </p>
+
+        <h2 id="schema">给插件加配置：schema</h2>
+        <p>
+          插件通过导出一个 <code>Config</code> 来声明自己的配置结构。Cordis 支持任意
+          <a href="https://standardschema.dev/" target="_blank" rel="noreferrer">Standard Schema</a> 验证器；
+          本仓库配套使用的是 <strong>Schemastery</strong>。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">config-demo.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+
+export const name = 'config-demo'
+
+export interface Config {
+  greeting: string
+  targets: string[]
+}
+
+export const Config: Schema&lt;Config&gt; = Schema.object({
+  greeting: Schema.string().default('Hello'),
+  targets: Schema.array(String).default(['world']),
+})
+
+export function apply(ctx: Context, config: Config) {
+  for (const target of config.targets) {
+    console.log(`${config.greeting}, ${target}!`)
+  }
+}</code></pre>
+        </div>
+
+        <p>
+          这里有两个同名的 <code>Config</code>：一个是 TypeScript 接口（给编译期用），一个是运行时 schema（给 Cordis 用）。
+          名字相同是约定，不是语法要求；关键是导出名为 <code>Config</code> 的 schema。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: config-demo
+  name: './config-demo.ts'
+  config:
+    targets: ['alpha', 'beta']</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>Hello, alpha!
+Hello, beta!</code></pre>
+        </div>
+
+        <p>
+          没有提供 <code>greeting</code>，schema 的默认值把它补齐了。所以 <code>apply</code> 里拿到的
+          <code>config</code> 永远是“完整且经过校验”的，不需要写 <code>config.greeting ?? 'Hello'</code>。
+        </p>
+
+        <h3>配置错误要明确失败</h3>
+        <p>把 <code>targets</code> 写成字符串，再运行：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml（错误示例）</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: config-demo
+  name: './config-demo.ts'
+  config:
+    targets: 'not-an-array'</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>ValidationError: invalid config:
+  - $.targets expected array but got not-an-array (at targets)</code></pre>
+        </div>
+
+        <p>
+          Fiber 进入 FAILED，宿主通常会打印错误并退出。这就是“<strong>misconfiguration fails loud</strong>”：
+          配置错误在启动时暴露，而不是运行到一半才崩。
+        </p>
+
+        <h2 id="yml">cordis.yml 解剖</h2>
+        <p>
+          一个 Cordis 配置文件是一个<strong>顶层数组</strong>，每个元素是一个 Entry（条目），描述“加载哪个模块、传什么配置”。
+          最小的条目只有两行：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- name: './hello.ts'</code></pre>
+        </div>
+
+        <p>完整的条目可以带更多字段：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: store
+  name: './plugins/store.ts'
+  config:
+    file: './data.json'
+
+- id: cli
+  name: './plugins/cli.ts'
+  inject: ['store']
+
+- id: experimental
+  name: './plugins/experimental.ts'
+  disabled: true</code></pre>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>字段</th><th>作用</th><th>细节</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>id</code></td>
+                <td>条目的稳定标识。</td>
+                <td>用于比较“改配置”与“删了再加”。省略时会生成随机 id，文件一改就可能被当成新条目重新挂载。</td>
+              </tr>
+              <tr>
+                <td><code>name</code></td>
+                <td>模块说明符。</td>
+                <td>相对路径（相对配置文件或 <code>baseUrl</code>）或包名；本仓库还支持 <code>cordis:group</code> 这类内置名。</td>
+              </tr>
+              <tr>
+                <td><code>config</code></td>
+                <td>传给插件的配置对象。</td>
+                <td>启动前由插件 schema 校验；默认值会补齐。</td>
+              </tr>
+              <tr>
+                <td><code>group</code></td>
+                <td>标记这是一个“组”，其 <code>config</code> 是子条目数组。</td>
+                <td>与 <code>name: cordis:group</code>（或 Group 插件）配合，见下文。</td>
+              </tr>
+              <tr>
+                <td><code>disabled</code></td>
+                <td>不加载这个条目。</td>
+                <td>条目保留在文件里；改回 <code>false</code> 后会重新加载。</td>
+              </tr>
+              <tr>
+                <td><code>inject</code></td>
+                <td>在配置层追加依赖或 intercept 配置。</td>
+                <td>通常由插件自己声明；条目级 <code>inject</code> 用于覆盖部署差异。</td>
+              </tr>
+              <tr>
+                <td><code>isolate</code></td>
+                <td>为该条目创建或加入服务隔离域。</td>
+                <td><code>{ db: true }</code> 独立域；<code>{ db: 'team-a' }</code> 共享命名域。</td>
+              </tr>
+              <tr>
+                <td><code>intercept</code></td>
+                <td>为该条目覆盖服务配置。</td>
+                <td>只对声明了服务配置类型的服务生效。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout info">
+          <span class="label">顺序无关</span>
+          <p>
+            条目在数组里的位置<strong>不决定加载先后</strong>。所有条目会并发启动，真正的顺序由 <code>inject</code>
+            依赖推导。唯一需要关心顺序的地方是“谁先出现在文件里更好读”，而不是“谁先启动”。
+          </p>
+        </div>
+
+        <h2 id="how">Loader 如何把文件变成插件树</h2>
+        <p>
+          Loader 本身也是一个 Cordis 插件。它维护一棵 <strong>EntryTree</strong>，每个 Entry 对应配置文件里的一行。
+          Include 则负责“读文件”，把 YAML 解析成条目数组。
+        </p>
+
+        <div class="diagram">
+          <div class="flow">
+            <div class="flow-node accent"><b>cordis.yml</b><small>顶层数组</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>Include</b><small>解析 YAML / JSON，应用 patch</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>EntryTree</b><small>按 id 维护条目</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>import()</b><small>加载模块</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node clay"><b>ctx.plugin()</b><small>创建 Fiber</small></div>
+          </div>
+          <figcaption>图 9-1　从文件到 Fiber。Loader 只负责“找到模块并挂载”，不执行插件业务。</figcaption>
+        </div>
+
+        <p>仓库里的启动器只有十几行，它做的事情就是“创建根上下文 → 挂 Loader → 让 Include 读文件”：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">vendor/cordis/bin.js</span><span class="code-lang">js</span></div>
+          <pre><code class="language-js">import { Context } from '@deepseek-ai/cordis'
+import { pathToFileURL } from 'node:url'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
+
+const ctx = new Context()
+ctx.baseUrl = pathToFileURL(process.cwd()).href + '/'
+
+await ctx.plugin(Loader)
+await ctx.loader.create({
+  name: '@deepseek-ai/cordis-plugin-include',
+  config: {
+    path: './cordis.yml',
+  },
+})</code></pre>
+        </div>
+
+        <p>
+          <code>ctx.baseUrl</code> 决定了 <code>'./hello.ts'</code> 这类相对路径从哪里解析。
+          启动器把它设为当前工作目录，所以你在哪个目录运行，就在哪个目录找配置和插件。
+        </p>
+
+        <div class="callout tip">
+          <span class="label">最小可用命令</span>
+          <p>
+            在 <code>tmp/cordis-tutorial</code> 这类目录里，执行
+            <code>node --import tsx ../../vendor/cordis/bin.js</code> 即可。它不需要你先编译 TypeScript，
+            <code>tsx</code> 会在导入时转译。
+          </p>
+        </div>
+
+        <h2 id="group">分组：把一组条目当作一个单元</h2>
+        <p>
+          当插件多起来，你会希望“这一组是 Web 服务”、“那一组是实验功能”，可以整体启用、禁用、隔离。
+          组条目长这样：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: web
+  name: '@deepseek-ai/cordis-plugin-group'
+  group: true
+  isolate:
+    db: 'web-team'
+  config:
+    - id: server
+      name: './plugins/server.ts'
+      config:
+        port: 3000
+
+    - id: api
+      name: './plugins/api.ts'
+      inject: ['db']</code></pre>
+        </div>
+
+        <p>
+          组的 <code>config</code> 不是普通对象，而是子条目数组。组内条目共享组的上下文，包括
+          <code>isolate</code> 指定的作用域；组卸载时，子条目会一起卸载。
+        </p>
+        <p>
+          在 DeepSeek Harness 的 profile 里，常把 <code>cordis:group</code> 注册为内置名，写法更短：
+          <code>name: cordis:group</code>。独立项目里如果没有注册内置名，就写 Group 包的完整名称。
+        </p>
+
+        <h2 id="isolate-config">隔离与拦截：在配置层表达部署差异</h2>
+        <p>
+          第 6 章我们用 <code>ctx.isolate('db')</code> 在代码里创建作用域。Loader 把这个能力搬到了配置里：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">tenants.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: tenant-a
+  name: '@deepseek-ai/cordis-plugin-group'
+  group: true
+  isolate:
+    db: true
+  config:
+    - id: db
+      name: './plugins/db.ts'
+      config: { file: './a.json' }
+    - id: app
+      name: './plugins/app.ts'
+
+- id: tenant-b
+  name: '@deepseek-ai/cordis-plugin-group'
+  group: true
+  isolate:
+    db: true
+  config:
+    - id: db
+      name: './plugins/db.ts'
+      config: { file: './b.json' }
+    - id: app
+      name: './plugins/app.ts'</code></pre>
+        </div>
+
+        <p>
+          两个租户各自看到自己的 <code>db</code>，互不覆盖。若希望它们共享同一个隔离域，把 <code>true</code>
+          换成同一个字符串标签即可，例如 <code>db: 'shared'</code>。
+        </p>
+
+        <p>
+          <code>intercept</code> 则用于“同一个服务，不同配置”。例如让某个组里的日志更安静：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">intercept.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: quiet
+  name: '@deepseek-ai/cordis-plugin-group'
+  group: true
+  intercept:
+    logger:
+      level: 0
+  config:
+    - name: './plugins/noisy.ts'</code></pre>
+        </div>
+
+        <p>
+          记住区分：<strong>isolate 换实现，intercept 改配置。</strong> 两者都只影响该条目及其子树。
+        </p>
+
+        <h2 id="disabled-js">disabled 与 !!js：让配置适应环境</h2>
+        <p>
+          <code>disabled</code> 是最简单的开关。它保留条目、停止加载；改回 <code>false</code> 就会重新加载，
+          依赖它的插件也会恢复。
+        </p>
+        <p>
+         本仓库的 Include 还支持 <code>!!js</code> 表达式，让配置在加载时计算。它只能出现在
+          <code>config</code> 和条目的 <code>disabled</code> 字段里：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">env.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: demo
+  name: './plugins/demo.ts'
+  disabled: !!js process.env.NODE_ENV === 'test'
+  config:
+    greeting: !!js process.env.DEMO_GREETING ?? 'Hello'</code></pre>
+        </div>
+
+        <p>
+          <code>config</code> 里的表达式在插件自己的上下文中求值；<code>disabled</code> 在每次挂载决策时、
+          基于 Loader 上下文求值。其他字段（<code>name</code>、<code>id</code>、<code>inject</code> 等）保持字面值。
+        </p>
+
+        <div class="callout danger">
+          <span class="label">安全提醒</span>
+          <p>
+            <code>!!js</code> 本质上是<strong>执行配置文件里的代码</strong>。只加载你信任的配置文件；
+            不要把用户上传的 YAML 直接交给 Include。需要“用户可配置”时，用 schema 限制字段，而不是开放任意表达式。
+          </p>
+        </div>
+
+        <h2 id="hmr">HMR：改代码不用重启</h2>
+        <p>
+          HMR（Hot Module Replacement，热模块替换）不是独立魔法，而是“卸载旧插件、加载新插件”的自动化：
+          文件监听器发现变化 → 找到受影响的 Entry → 卸载对应 Fiber → 清除模块缓存 → 重新导入 → 重新挂载。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">hmr.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: logger
+  name: '@deepseek-ai/cordis-plugin-logger-console'
+
+- id: timer
+  name: '@deepseek-ai/cordis-plugin-timer'
+
+- id: hmr
+  name: '@deepseek-ai/cordis-plugin-hmr'
+  config:
+    root: ['.']
+    debounce: 100
+
+- id: hello
+  name: './hello.ts'</code></pre>
+        </div>
+
+        <p>编辑 <code>hello.ts</code> 并保存，终端会出现类似：</p>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>hello from my first plugin
+[I] hmr watching [ '.' ]
+[I] hmr reload plugin at hello.ts
+hello from my EDITED plugin</code></pre>
+        </div>
+
+        <p>
+          旧实例先卸载（所有 Effect 回卷），新代码再加载，<code>apply</code> 重新执行。
+          如果某个插件没有正确清理，HMR 会立刻把它暴露出来：定时器翻倍、监听器重复、连接泄漏。
+          所以<strong>HMR 既是开发工具，也是对 Effect 纪律的测试</strong>。
+        </p>
+
+        <div class="callout warn">
+          <span class="label">HMR 的运行要求</span>
+          <p>
+            <code>@deepseek-ai/cordis-plugin-hmr</code> 需要 Loader、Timer，以及能访问 Node 内部模块加载器的运行时；
+            缺少这些条件时它会直接报错。DeepSeek Harness 的启动器已经处理了这些前提；它还提供了自己的
+            <code>@deepseek-ai/dsh-hmr</code>，概念相同、配置项略有差异。独立项目里如果配置不成功，
+            先回到“手动重启”，不要卡在 HMR 上。
+          </p>
+        </div>
+
+        <p>
+          修改 <code>cordis.yml</code> 本身也会触发更新：Loader 按 <code>id</code> 比较条目，只挂载、卸载或重新配置变化的部分。
+          这也解释了为什么建议给每个条目写稳定的 <code>id</code>。
+        </p>
+
+        <h2 id="failures">六种常见失败</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>现象</th><th>可能原因</th><th>处理</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>条目完全没反应</td>
+                <td>模块名拼错、路径不对、包没安装。</td>
+                <td>看 logger 的 error；Loader 对“无法解析”通常只记录日志，不崩溃。</td>
+              </tr>
+              <tr>
+                <td>启动即报 ValidationError</td>
+                <td><code>config</code> 与 schema 不匹配。</td>
+                <td>按错误里的字段路径修正；不要绕过 schema。</td>
+              </tr>
+              <tr>
+                <td>插件停在 PENDING</td>
+                <td><code>inject</code> 的服务没人提供，或提供者被 disabled。</td>
+                <td>检查条目列表与 <code>disabled</code>；用第 5 章的诊断脚本。</td>
+              </tr>
+              <tr>
+                <td>服务重复注册</td>
+                <td>两个条目提供了同名服务，且没有隔离。</td>
+                <td>给其中一个加 <code>isolate</code>，或改用不同服务名。</td>
+              </tr>
+              <tr>
+                <td>改了配置没生效</td>
+                <td>条目没有稳定 <code>id</code>，或被当成新条目；文件没保存/监听未启动。</td>
+                <td>补 <code>id</code>；确认 Include 的监控与文件路径。</td>
+              </tr>
+              <tr>
+                <td>YAML 解析失败</td>
+                <td>缩进错误、顶层不是数组、重复 key。</td>
+                <td>先修 YAML；Include 会拒绝非数组的顶层结构。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout deep">
+          <span class="label">进阶 · volatile 配置</span>
+          <p>
+            有些配置字段会被插件在每次操作中读取，例如提示词、阈值。Schemastery 的 <code>.volatile()</code>
+            可以把它们变成稳定引用，通过 <code>.get()</code> 读取；Loader 发现只有这些字段变化时，会直接更新引用并发出
+            <code>loader/volatile-update</code>，而不重启插件。它适合“频繁微调、重启代价高”的字段；普通字段变化仍然走
+            完整的卸载/重载流程。
+          </p>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>配置是插件契约的一部分：用 schema 校验，默认值补齐，错误在启动时明确失败。</li>
+            <li><code>cordis.yml</code> 是顶层数组；每个条目描述模块、配置、依赖、开关、隔离。</li>
+            <li>Loader 维护 EntryTree，Include 负责读文件；它们都是可选的外围插件。</li>
+            <li><code>id</code> 稳定才能正确比较“修改”与“重建”；条目顺序不影响启动顺序。</li>
+            <li>组用于整体管理子树；<code>isolate</code> 换实现，<code>intercept</code> 改配置。</li>
+            <li>HMR 是“卸载 + 重载”的自动化，前提是每个插件都能正确清理。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>为什么 <code>cordis.yml</code> 里两个条目的先后顺序不影响加载？</summary>
+            <div class="answer">
+              <p>
+                因为 Loader 会并发创建所有条目，插件是否启动由 <code>inject</code> 依赖决定：缺依赖就 PENDING，
+                依赖就绪再 ACTIVE。顺序由关系推导，而不是数组位置。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary><code>isolate: { db: true }</code> 和 <code>isolate: { db: 'team-a' }</code> 有什么区别？</summary>
+            <div class="answer">
+              <p>
+                <code>true</code> 为该条目创建一个独立的本地作用域，只影响它和它的子树；
+                <code>'team-a'</code> 则加入名为 <code>team-a</code> 的共享作用域，多个使用同一标签的条目会看到同一个
+                <code>db</code> 实现。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>HMR 为什么能工作？它对插件作者提出了什么要求？</summary>
+            <div class="answer">
+              <p>
+                因为 Cordis 的生命周期是可逆的：卸载会撤销插件注册的所有 Effect，加载会重新执行插件。
+                HMR 只是监听文件变化并触发这一过程。它要求插件把定时器、监听器、连接等资源都登记为 Effect；
+                否则旧实例的残留会泄漏，热更新越多次越严重。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 9 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

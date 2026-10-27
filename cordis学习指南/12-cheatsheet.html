@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 12 章 · 速查表与排错手册 — Cordis 学习指南</title>
+  <meta name="description" content="Cordis API 速查、错误信息对照、调试清单、术语表、自测题与下一步学习路线。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="12">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第五篇 · 附录</strong><br>
+      第 12 / 12 章<br>
+      约 15 分钟（查阅）
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 12 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第五篇 · 附录</span><span class="dot"></span>
+            <span class="kicker-muted">第 12 章</span>
+          </div>
+          <h1>速查表与排错手册</h1>
+          <p class="lead">
+            这一章不需要从头读。写代码时忘了 API，遇到看不懂的报错，或者想快速复习术语，回来查即可。
+            最后有 10 道综合自测题和一份下一步路线。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>用途</strong> 查阅</span>
+            <span class="chip"><strong>内容</strong> API · 报错 · 术语 · 练习</span>
+            <span class="chip"><strong>前置</strong> 任意章节</span>
+          </div>
+        </header>
+
+        <h2 id="api">API 速查</h2>
+
+        <h3>Context</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>写法</th><th>作用</th><th>备注</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>new Context()</code></td><td>创建根上下文</td><td>内置 Registry、Reflect、Events、Logger。</td></tr>
+              <tr><td><code>ctx.plugin(plugin, config?)</code></td><td>挂载插件，返回 Fiber</td><td>可 <code>await</code>；启动错误会抛出。</td></tr>
+              <tr><td><code>ctx.get(name, strict?)</code></td><td>可选取服务</td><td>找不到返回 <code>undefined</code>。</td></tr>
+              <tr><td><code>ctx.provide(name, value)</code></td><td>注册服务</td><td>返回 disposer；随 Fiber 卸载。</td></tr>
+              <tr><td><code>ctx.set(name, value)</code></td><td>更新自己提供的服务</td><td>只有提供者 Fiber 能改。</td></tr>
+              <tr><td><code>ctx.isolate(name, label?)</code></td><td>创建服务隔离作用域</td><td>同一 label 共享作用域。</td></tr>
+              <tr><td><code>ctx.intercept(name, config)</code></td><td>覆盖服务配置</td><td>服务需声明配置类型。</td></tr>
+              <tr><td><code>ctx.extend(meta?)</code></td><td>创建子上下文</td><td>子继承父，父不受影响。</td></tr>
+              <tr><td><code>ctx.on / once / emit</code></td><td>事件监听与分发</td><td><code>on</code> 返回 disposer。</td></tr>
+              <tr><td><code>ctx.parallel / serial / bail / waterfall</code></td><td>其他分发模式</td><td>见第 7 章。</td></tr>
+              <tr><td><code>ctx.effect(body, label?)</code></td><td>注册可撤销副作用</td><td>body 立即执行，返回 disposer。</td></tr>
+              <tr><td><code>ctx.accessor(name, options)</code></td><td>定义计算属性</td><td>框架内部使用较多。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Fiber</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>成员</th><th>作用</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>fiber.state</code></td><td><code>PENDING</code> / <code>LOADING</code> / <code>ACTIVE</code> / <code>FAILED</code> / <code>UNLOADING</code> / <code>DISPOSED</code></td></tr>
+              <tr><td><code>fiber.name</code></td><td>沿父链得到的显示名，根为 <code>'root'</code>。</td></tr>
+              <tr><td><code>fiber.uid</code></td><td>注册表编号；卸载后为 <code>null</code>。</td></tr>
+              <tr><td><code>fiber.ctx</code></td><td>该插件运行所在的子上下文。</td></tr>
+              <tr><td><code>await fiber</code></td><td>等待启动稳定；失败时抛出错误。</td></tr>
+              <tr><td><code>fiber.dispose()</code></td><td>卸载自身与子树，等待清理完成。</td></tr>
+              <tr><td><code>fiber.update(config)</code></td><td>校验并应用新配置，随后重启。</td></tr>
+              <tr><td><code>fiber.restart()</code></td><td>用当前配置卸载再加载。</td></tr>
+              <tr><td><code>fiber.getEffects()</code></td><td>返回当前 Effect 元数据树，诊断用。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Service</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>写法</th><th>作用</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>class X extends Service</code></td><td>定义一个服务插件。</td></tr>
+              <tr><td><code>super(ctx, 'name')</code></td><td>注册服务；名字进入扁平命名空间。</td></tr>
+              <tr><td><code>[Service.init]()</code></td><td>构造函数之后的异步初始化；可返回 disposer。</td></tr>
+              <tr><td><code>[Service.check]()</code></td><td>可用性判断；返回 false 时依赖者继续等待。</td></tr>
+              <tr><td><code>[Service.invoke](...)</code></td><td>让服务本身可调用，例如 <code>ctx.logger()</code>。</td></tr>
+              <tr><td><code>[Service.config]</code></td><td>声明服务接受的 intercept 配置类型。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Loader</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>写法</th><th>作用</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>await ctx.plugin(Loader)</code></td><td>挂载 Loader 服务。</td></tr>
+              <tr><td><code>ctx.loader.create(options)</code></td><td>新增并启动一个条目，返回 id。</td></tr>
+              <tr><td><code>ctx.loader.update(id, options)</code></td><td>更新、移动或重启条目。</td></tr>
+              <tr><td><code>ctx.loader.remove(id)</code></td><td>停止并删除条目。</td></tr>
+              <tr><td><code>ctx.loader.resolve(id)</code></td><td>按 id 查找条目，支持 <code>a:b</code> 嵌套。</td></tr>
+              <tr><td><code>ctx.loader.await()</code></td><td>等待所有导入与重载完成。</td></tr>
+              <tr><td><code>ctx.loader.locate(fiber?)</code></td><td>查找 Fiber 所属的条目 id。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>cordis.yml 条目</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>字段</th><th>类型</th><th>作用</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>id</code></td><td>string</td><td>稳定标识；省略会随机生成。</td></tr>
+              <tr><td><code>name</code></td><td>string</td><td>模块名或相对路径。</td></tr>
+              <tr><td><code>config</code></td><td>any</td><td>传给插件的配置，启动前校验。</td></tr>
+              <tr><td><code>group</code></td><td>boolean</td><td>标记为组，config 是子条目数组。</td></tr>
+              <tr><td><code>disabled</code></td><td>boolean</td><td>保留条目但不加载。</td></tr>
+              <tr><td><code>inject</code></td><td>string[] / object</td><td>配置层追加依赖。</td></tr>
+              <tr><td><code>isolate</code></td><td>object</td><td>为条目创建/加入服务隔离域。</td></tr>
+              <tr><td><code>intercept</code></td><td>object</td><td>为条目覆盖服务配置。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="lifecycle">生命周期一页纸</h2>
+        <div class="diagram">
+          <div class="flow">
+            <div class="flow-node clay"><b>PENDING</b><small>inject 未满足</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>LOADING</b><small>校验配置 + 执行插件</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node accent"><b>ACTIVE</b><small>服务可用</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>UNLOADING</b><small>逆序清理</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>DISPOSED</b><small>不可重启</small></div>
+          </div>
+          <p class="small" style="margin:14px 0 0; text-align:center">
+            LOADING 失败 → FAILED；ACTIVE 时依赖消失或配置更新 → UNLOADING → 重新 LOADING。
+          </p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>阶段</th><th>发生了什么</th><th>插件代码在做什么</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>创建</td><td><code>ctx.plugin()</code> 创建 Fiber，记录原始配置与 inject。</td><td>尚未执行。</td></tr>
+              <tr><td>等待</td><td>逐个检查依赖是否可用。</td><td>尚未执行。</td></tr>
+              <tr><td>加载</td><td>解析配置、校验 schema、调用插件。</td><td><code>apply</code> 运行，注册服务/事件/Effect。</td></tr>
+              <tr><td>就绪</td><td>状态变 ACTIVE，通知依赖者。</td><td>正常处理业务。</td></tr>
+              <tr><td>卸载</td><td>撤销 Effect、释放服务、通知依赖者。</td><td>disposer 运行。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="errors">报错与现象对照</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>你看到的</th><th>含义</th><th>怎么修</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>cannot get property "x" without inject</code></td>
+                <td>读了一个不在祖先链上、也没 inject 的服务。</td>
+                <td>把 <code>x</code> 加进 <code>inject</code>；或改用 <code>ctx.get('x')</code>。</td>
+              </tr>
+              <tr>
+                <td><code>cannot get required service "x" in inactive context</code></td>
+                <td>依赖的服务当前不可用，常见于卸载后或异步回调里。</td>
+                <td>不要在 Fiber 卸载后访问服务；检查异步任务是否被正确取消。</td>
+              </tr>
+              <tr>
+                <td><code>service "x" has been registered at &lt;...&gt;</code></td>
+                <td>同一作用域重复注册同名服务。</td>
+                <td>改服务名，或给其中一个分支加 <code>isolate</code>。</td>
+              </tr>
+              <tr>
+                <td><code>property "x" is already declared as accessor</code></td>
+                <td>服务名与计算属性冲突。</td>
+                <td>换名字；检查是否有 <code>ctx.accessor('x', ...)</code>。</td>
+              </tr>
+              <tr>
+                <td><code>invalid plugin, expect function or object with an "apply" method</code></td>
+                <td>传给 <code>ctx.plugin</code> 的东西不是合法插件。</td>
+                <td>检查导出方式：模块默认导出、命名导出 <code>apply</code>，或类。</td>
+              </tr>
+              <tr>
+                <td><code>invalid config:</code> 加字段路径</td>
+                <td>配置未通过 schema 校验。</td>
+                <td>按提示修字段；不要绕过校验。</td>
+              </tr>
+              <tr>
+                <td><code>cannot create effect on inactive context</code></td>
+                <td>在已卸载的上下文里注册 Effect。</td>
+                <td>注册集中在 apply 阶段；异步回调里先判断 Fiber 是否仍存活。</td>
+              </tr>
+              <tr>
+                <td><code>config file must be a top-level array of entries</code></td>
+                <td>YAML 顶层不是数组，或文件为空/截断。</td>
+                <td>顶层写成 <code>- name: ...</code> 的列表；检查缩进。</td>
+              </tr>
+              <tr>
+                <td><code>cannot resolve entry "x"</code></td>
+                <td>Loader 找不到该 id。</td>
+                <td>检查 id 拼写；嵌套条目用 <code>parent:child</code>。</td>
+              </tr>
+              <tr>
+                <td><code>--expose-internals is required for HMR service</code></td>
+                <td>HMR 拿不到 Node 内部模块加载器。</td>
+                <td>用支持该能力的启动器；或暂时关闭 HMR。</td>
+              </tr>
+              <tr>
+                <td>代码没输出，也不报错</td>
+                <td>最常见是 PENDING；也可能是模块没解析、条目 disabled。</td>
+                <td>枚举 Fiber 状态；检查 inject 提供者、模块名、disabled。</td>
+              </tr>
+              <tr>
+                <td>事件监听器没反应</td>
+                <td>事件在监听器注册前就发出了，或名字不一致。</td>
+                <td>先注册再 emit；用声明合并检查名字；确认模块已加载。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="debug">七步调试清单</h2>
+        <ol>
+          <li><strong>它加载了吗？</strong> 枚举 <code>ctx.registry.values()</code>，看 Fiber 是否存在。</li>
+          <li><strong>它是什么状态？</strong> PENDING 找依赖；FAILED 找错误；DISPOSED 说明已被卸载。</li>
+          <li><strong>依赖有人提供吗？</strong> 搜 <code>provide('name')</code> 或 <code>super(ctx, 'name')</code>；注意拼写与大小写。</li>
+          <li><strong>作用域对吗？</strong> 提供者与消费者是否在同一个 <code>isolate</code> 分支。</li>
+          <li><strong>配置过了吗？</strong> 看 ValidationError；检查 <code>config</code> 字段类型与默认值。</li>
+          <li><strong>代码执行到了吗？</strong> 在 <code>apply</code> 第一行打日志；没有日志说明卡在前面。</li>
+          <li><strong>是异步问题吗？</strong> <code>emit</code> 不等待 Promise；<code>waterfall</code> 忘记 <code>next()</code> 会短路。</li>
+        </ol>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">debug.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { FiberState, type Context } from '@deepseek-ai/cordis'
+
+const NAMES = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
+
+export function apply(ctx: Context) {
+  setTimeout(() =&gt; {
+    console.log('--- fibers ---')
+    for (const runtime of ctx.registry.values()) {
+      for (const fiber of runtime.fibers) {
+        console.log(fiber.name, NAMES[fiber.state], fiber.uid)
+      }
+    }
+    console.log('--- effects ---')
+    console.log(ctx.fiber.getEffects())
+  }, 1000)
+}</code></pre>
+        </div>
+
+        <h2 id="glossary">术语表</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>术语</th><th>英文</th><th>一句话解释</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>上下文</td><td>Context</td><td>服务的容器，也是插件的作用域；通过代理按名字解析服务。</td></tr>
+              <tr><td>插件</td><td>Plugin</td><td>Cordis 的功能单元，可以是函数、对象或类。</td></tr>
+              <tr><td>纤程 / 运行实例</td><td>Fiber</td><td>一次插件挂载的生命周期句柄，记录状态、依赖与 Effect。</td></tr>
+              <tr><td>服务</td><td>Service</td><td>注册在上下文中的具名能力。</td></tr>
+              <tr><td>提供者</td><td>Provider</td><td>实现并注册服务的一方。</td></tr>
+              <tr><td>消费者</td><td>Consumer</td><td>通过 inject 或 <code>ctx.get</code> 使用服务的一方。</td></tr>
+              <tr><td>能力接缝</td><td>Capability seam</td><td>服务定义、提供者、消费者三个角色组成的完整能力边界。</td></tr>
+              <tr><td>依赖注入</td><td>Dependency Injection</td><td>不自己创建依赖，由容器在合适时机提供。</td></tr>
+              <tr><td>控制反转</td><td>Inversion of Control</td><td>把创建与编排的控制权交给框架，自己只做声明。</td></tr>
+              <tr><td>副作用</td><td>Effect</td><td>注册后需要可撤销的行为；Cordis 用 disposer 表达。</td></tr>
+              <tr><td>清理函数</td><td>Disposer</td><td>撤销一个注册、释放一个资源的函数。</td></tr>
+              <tr><td>注册表</td><td>Registry</td><td>管理插件运行时与 Fiber 的服务。</td></tr>
+              <tr><td>反射层</td><td>Reflect</td><td>服务仓库与代理拦截的实现。</td></tr>
+              <tr><td>事件</td><td>Event</td><td>应用级的广播，监听者按事件名订阅。</td></tr>
+              <tr><td>分发模式</td><td>Dispatch mode</td><td>emit / parallel / serial / bail / waterfall。</td></tr>
+              <tr><td>瀑布式事件</td><td>Waterfall</td><td>环绕中间件；调用 next 委托，不调用则短路。</td></tr>
+              <tr><td>命中即停</td><td>Bail</td><td>监听器返回非 false/null/undefined 时停止后续。</td></tr>
+              <tr><td>隔离</td><td>Isolation</td><td>让同一服务名在不同分支解析到不同实现。</td></tr>
+              <tr><td>拦截配置</td><td>Intercept</td><td>为某个服务在局部覆盖配置，而不换实现。</td></tr>
+              <tr><td>配置条目</td><td>Entry</td><td>Loader 配置文件中的一行，描述一个插件。</td></tr>
+              <tr><td>加载器</td><td>Loader</td><td>读取条目、导入模块、维护插件树的插件。</td></tr>
+              <tr><td>文件包含</td><td>Include</td><td>从 YAML/JSON 读条目，支持 <code>!!js</code> 与 patch。</td></tr>
+              <tr><td>热模块替换</td><td>HMR</td><td>监听文件变化，卸载旧插件并加载新代码。</td></tr>
+              <tr><td>配置 schema</td><td>Config schema</td><td>声明配置结构、默认值与校验规则。</td></tr>
+              <tr><td>易变配置</td><td>Volatile</td><td>不重启插件即可更新的配置引用。</td></tr>
+              <tr><td>元框架</td><td>Meta-framework</td><td>不提供具体业务，而提供组合框架的机制的框架。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="quiz">10 道综合自测</h2>
+        <div class="quiz">
+          <details>
+            <summary>1. <code>ctx.foo</code> 与 <code>ctx.get('foo')</code> 的核心区别是什么？</summary>
+            <div class="answer">
+              <p>
+                属性访问是强依赖：对不在祖先链上的服务，插件上下文中要求先 <code>inject</code>，找不到会抛错；
+                <code>get</code> 是可选取值，不要求 inject，找不到返回 <code>undefined</code>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>2. 插件停在 PENDING 和停在 FAILED，排查方向有什么不同？</summary>
+            <div class="answer">
+              <p>
+                PENDING 是“依赖没齐”，查 <code>inject</code> 列表、提供者是否存在、作用域是否一致；
+                FAILED 是“执行出错”，查配置校验和 <code>apply</code> 抛出的异常。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>3. 为什么 waterfall 的观察型监听器必须调用 <code>next()</code>？</summary>
+            <div class="answer">
+              <p>
+                因为不调用就表示短路，后续监听器和最内层默认行为都不会执行，而且不会报错。
+                只做日志、标注的监听器应当 <code>return next()</code>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>4. <code>ctx.emit</code> 会等待异步监听器吗？如果不会，应该用什么？</summary>
+            <div class="answer">
+              <p>
+                不会。需要等待全部异步监听器时用 <code>await ctx.parallel</code>；
+                需要按顺序等待时用 <code>await ctx.serial</code>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>5. 为什么每个注册都需要 disposer？没有会怎样？</summary>
+            <div class="answer">
+              <p>
+                因为插件会被卸载、替换、热更新。没有 disposer，注册会残留，造成定时器叠加、监听器重复、
+                连接泄漏，甚至访问已释放的服务。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>6. 替换服务提供者时，消费者为什么不用改？</summary>
+            <div class="answer">
+              <p>
+                因为消费者依赖的是服务名，不是具体类。提供者消失时消费者被卸载，新提供者上线后消费者重新加载，
+                整个过程由 Cordis 的依赖跟踪完成。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>7. <code>isolate</code> 和 <code>intercept</code> 分别改什么？</summary>
+            <div class="answer">
+              <p>
+                <code>isolate</code> 改“服务解析到哪个实现”，<code>intercept</code> 改“同一个实现读到的配置”。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>8. 不用 Loader，Cordis 还能用吗？损失了什么？</summary>
+            <div class="answer">
+              <p>
+                能。直接 <code>ctx.plugin()</code> 即可。损失的是配置驱动装配、条目级禁用/分组、配置热更新，
+                以及基于文件变化的 HMR。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>9. 配置 schema 应该由谁声明？为什么不能在 <code>apply</code> 里临时判断？</summary>
+            <div class="answer">
+              <p>
+                由插件自己声明（导出 <code>Config</code>），因为只有提供者知道合法输入。
+                在 <code>apply</code> 里临时判断会让错误暴露得太晚，也无法给 Loader 和配置工具提供结构信息。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>10. 子插件和父插件的卸载顺序是什么？为什么？</summary>
+            <div class="answer">
+              <p>
+                父插件卸载会一并卸载子插件，并等待子插件清理完成。具体先后遵循 Effect 的逆序规则，
+                不要把“子一定先于父”当成固定保证；需要严格顺序时，把步骤放进同一个 disposer 显式 await。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="next">下一步：读源码与做练习</h2>
+        <p>
+          到这里，你已经能读懂大部分 Cordis 项目了。想继续深入，建议按下面的顺序读源码——它比文档更精确，
+          而且这个仓库里的源码带有完整的 JSDoc：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>顺序</th><th>文件</th><th>看什么</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>1</td><td><code>vendor/cordis/src/context.ts</code></td><td>根上下文如何创建，extend / isolate / intercept。</td></tr>
+              <tr><td>2</td><td><code>vendor/cordis/src/registry.ts</code></td><td>三种插件形态如何归一，Fiber 如何创建。</td></tr>
+              <tr><td>3</td><td><code>vendor/cordis/src/fiber.ts</code></td><td>状态机、依赖 epoch、Effect 收集与卸载。</td></tr>
+              <tr><td>4</td><td><code>vendor/cordis/src/events.ts</code></td><td>五种分发模式与监听器注册。</td></tr>
+              <tr><td>5</td><td><code>vendor/cordis/src/reflect.ts</code></td><td>Proxy 如何解析服务，provide / notify。</td></tr>
+              <tr><td>6</td><td><code>vendor/cordis/src/service.ts</code></td><td>Service 基类与配置合并。</td></tr>
+              <tr><td>7</td><td><code>vendor/loader/src/</code></td><td>EntryTree、Entry、Group、隔离。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>五个练习</h3>
+        <ol>
+          <li><strong>给 todo 加删除：</strong>新增 <code>remove</code> 方法、<code>todo/removed</code> 事件和 CLI 分支。</li>
+          <li><strong>写第二个存储 provider：</strong>用内存 Map 实现同样的接口，在 yml 里切换。</li>
+          <li><strong>加 JSON 输出：</strong><code>todo list --json</code>，只在 CLI 层处理，不影响服务。</li>
+          <li><strong>测试事件：</strong>在测试里监听 <code>todo/added</code>，断言服务确实发出了事件。</li>
+          <li><strong>加入 HMR：</strong>按第 9 章配置，改一行提示语，观察插件重载；再故意不清理定时器，观察泄漏。</li>
+        </ol>
+
+        <h3>延伸阅读</h3>
+        <ul>
+          <li>本仓库：<code>docs/cordis-primer.zh.md</code>（精简概念）、<code>docs/cordis-tutorial/index.zh.md</code>（逐步实践）。</li>
+          <li>上游 Cordis 仓库：<a href="https://github.com/cordiverse/cordis" target="_blank" rel="noreferrer">github.com/cordiverse/cordis</a>。</li>
+          <li>Koishi 文档：<a href="https://koishi.chat/" target="_blank" rel="noreferrer">koishi.chat</a>——Cordis 最早的规模化应用场景。</li>
+          <li>DeepSeek Harness：<a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">github.com/deepseek-ai/deepseek-harness</a>——看 Cordis 如何支撑一个完整的 agent 运行时。</li>
+        </ul>
+
+        <div class="summary">
+          <h2>最后记住三句话</h2>
+          <ul>
+            <li><strong>插件描述贡献，Context 负责寻址，Fiber 负责生命周期。</strong></li>
+            <li><strong>服务用于直接调用，事件用于广播；注册的都要能撤销。</strong></li>
+            <li><strong>先用最简单的工具；当“替换、组合、清理”成为问题时，再让 Cordis 接手。</strong></li>
+          </ul>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 12 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

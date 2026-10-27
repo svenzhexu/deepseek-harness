@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 10 章 · 与手写 main 的异同 — Cordis 学习指南</title>
+  <meta name="description" content="用 80 行实现一个迷你插件容器，再与 Cordis 逐项对照：依赖解析、生命周期、清理、隔离、配置与 HMR 的差异和代价。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="10">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第四篇 · 对照与实战</strong><br>
+      第 10 / 12 章<br>
+      约 30 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 10 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第四篇 · 对照与实战</span><span class="dot"></span>
+            <span class="kicker-muted">第 10 章</span>
+          </div>
+          <h1>与手写 main 的异同</h1>
+          <p class="lead">
+            理解一个框架最快的方式，不是读它的文档，而是自己写一个“能跑的最小版本”，然后看它在哪里开始力不从心。
+            这一章我们用 80 行实现一个迷你插件容器，再把它和 Cordis 放在同一张桌子上逐项对照。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 进阶</span>
+            <span class="chip"><strong>阅读</strong> 约 30 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 6–8 章</span>
+            <span class="chip"><strong>关键词</strong> 对照 · 取舍 · 迷你框架</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>亲手实现依赖注入 + 生命周期 + 事件的最小闭环；</li>
+            <li>说清 Cordis 比“从 main 手写”多了哪些能力，分别值多少钱；</li>
+            <li>判断什么时候迷你版本就够了，什么时候必须用成熟框架；</li>
+            <li>理解框架复杂度的真正来源：边界条件，而不是 API 数量。</li>
+          </ul>
+        </div>
+
+        <h2 id="three">先明确：我们在比较三种东西</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>写法</th><th>核心</th><th>适合</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>A. 直接写 main</strong></td>
+                <td>按顺序 new、调用、关闭。</td>
+                <td>小脚本、一次性任务、原型。</td>
+              </tr>
+              <tr>
+                <td><strong>B. 手写迷你容器</strong></td>
+                <td>自己实现注册、依赖、清理、事件。</td>
+                <td>学习；或需求极窄、不想引入依赖的项目。</td>
+              </tr>
+              <tr>
+                <td><strong>C. Cordis</strong></td>
+                <td>成熟的容器 + 生命周期 + 事件 + 加载器 + 生态。</td>
+                <td>插件平台、长期运行、多人扩展、需要热更新。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          很多“框架之争”把 A 和 C 直接对比，结论往往是“小项目不需要框架”或“大项目必须用框架”。
+          真正有意思的对照是 <strong>B 和 C</strong>：它们做的是同一件事，只是完成度不同。
+        </p>
+
+        <h2 id="mini">80 行迷你插件容器</h2>
+        <p>
+          下面这段代码实现了 Cordis 最核心的四件事：服务注册、依赖等待、Effect 清理、事件广播。
+          它不追求生产可用，只追求“看得懂、跑得通”。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">mini-cordis.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">type Disposer = () =&gt; void | Promise&lt;void&gt;
+type Plugin = ((ctx: Context) =&gt; void) &amp; { inject?: string[] }
+
+const pending = new Set&lt;() =&gt; void&gt;()
+
+class Context {
+  private services = new Map&lt;string, any&gt;()
+  private disposers: Disposer[] = []
+  private listeners = new Map&lt;string, Function[]&gt;()
+
+  constructor(private parent?: Context) {}
+
+  private find(name: string): Context | undefined {
+    if (this.services.has(name)) return this
+    return this.parent?.find(name)
+  }
+
+  has(name: string) {
+    return !!this.find(name)
+  }
+
+  get(name: string): any {
+    return this.find(name)?.services.get(name)
+  }
+
+  provide(name: string, value: any) {
+    if (this.find(name)) throw new Error(`duplicate service: ${name}`)
+    this.services.set(name, value)
+    this.effect(() =&gt; () =&gt; { this.services.delete(name) })
+    for (const retry of [...pending]) retry()
+  }
+
+  effect(setup: () =&gt; Disposer) {
+    const dispose = setup()
+    this.disposers.push(dispose)
+    return dispose
+  }
+
+  on(event: string, listener: (...args: any[]) =&gt; void) {
+    const list = this.listeners.get(event) ?? []
+    list.push(listener)
+    this.listeners.set(event, list)
+    this.effect(() =&gt; () =&gt; {
+      const index = list.indexOf(listener)
+      if (index &gt;= 0) list.splice(index, 1)
+    })
+  }
+
+  emit(event: string, ...args: any[]) {
+    for (const listener of this.listeners.get(event) ?? []) listener(...args)
+  }
+
+  plugin(plugin: Plugin) {
+    const ctx = new Context(this)
+    const start = () =&gt; {
+      const missing = (plugin.inject ?? []).filter(name =&gt; !ctx.has(name))
+      if (missing.length) {
+        pending.add(start)
+        return
+      }
+      pending.delete(start)
+      plugin(ctx)
+    }
+    start()
+    return {
+      ctx,
+      async dispose() {
+        pending.delete(start)
+        for (const dispose of ctx.disposers.splice(0).reverse()) await dispose()
+      },
+    }
+  }
+}</code></pre>
+        </div>
+
+        <p>用起来是这样的：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">demo.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const root = new Context()
+root.provide('db', { query: () =&gt; 'ok' })
+
+root.plugin(Object.assign((ctx: Context) =&gt; {
+  console.log('consumer sees', ctx.get('db').query())
+
+  ctx.on('ping', () =&gt; console.log('pong'))
+}, { inject: ['db'] }))
+
+root.emit('ping')</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>consumer sees ok
+pong</code></pre>
+        </div>
+
+        <p>它已经具备了 Cordis 的骨架：</p>
+        <ul>
+          <li><code>provide</code> 把能力放进容器，<code>inject</code> 让插件等待依赖；</li>
+          <li><code>effect</code> 收集清理函数，<code>dispose</code> 逆序执行；</li>
+          <li><code>on</code> / <code>emit</code> 提供最小的事件广播；</li>
+          <li>子上下文通过 <code>parent</code> 继承服务。</li>
+        </ul>
+
+        <p>
+          如果你能独立写出这段代码，说明你已经理解了 Cordis 80% 的<strong>核心思想</strong>。
+          剩下的 20%，才是它真正复杂、也真正值钱的地方。
+        </p>
+
+        <h2 id="missing">迷你版本省略了什么</h2>
+        <p>把上面的代码和 Cordis 对比，会发现差距不在“功能列表”，而在“边界条件”：</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>能力</th><th>迷你版本</th><th>Cordis</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>依赖缺失</td>
+                <td>记在一个全局 <code>pending</code> 集合里，服务一到就重试。</td>
+                <td>每个 Fiber 独立跟踪依赖快照；支持隔离作用域、提供者替换、可选依赖。</td>
+              </tr>
+              <tr>
+                <td>依赖消失</td>
+                <td>不处理；消费者继续持有旧引用。</td>
+                <td>自动卸载消费者，等提供者恢复后重载。</td>
+              </tr>
+              <tr>
+                <td>强依赖检查</td>
+                <td>只检查 <code>inject</code> 名字，不能阻止直接 <code>ctx.db</code>。</td>
+                <td>Proxy 拦截属性读取，没有 inject 直接报错。</td>
+              </tr>
+              <tr>
+                <td>卸载顺序</td>
+                <td>只处理当前上下文的 disposer。</td>
+                <td>Fiber 树递归卸载，父等子，异步清理可等待。</td>
+              </tr>
+              <tr>
+                <td>重入安全</td>
+                <td>卸载过程中再注册会直接漏掉。</td>
+                <td>处理“卸载时又注册”“卸载时又卸载”等竞态。</td>
+              </tr>
+              <tr>
+                <td>事件</td>
+                <td>同步遍历，无返回值、无优先级、无异步等待。</td>
+                <td>五种分发模式、waterfall 中间件、prepend/global、错误聚合。</td>
+              </tr>
+              <tr>
+                <td>配置</td>
+                <td>没有。</td>
+                <td>Schema 校验、默认值、配置更新、volatile 引用。</td>
+              </tr>
+              <tr>
+                <td>隔离</td>
+                <td>没有。</td>
+                <td><code>isolate</code>、<code>intercept</code>、Loader 级作用域。</td>
+              </tr>
+              <tr>
+                <td>装配</td>
+                <td>代码里手动 <code>plugin</code>。</td>
+                <td>Loader + <code>cordis.yml</code>，支持分组、禁用、补丁。</td>
+              </tr>
+              <tr>
+                <td>热更新</td>
+                <td>没有。</td>
+                <td>HMR 监听文件，卸载/重载受影响的 Entry。</td>
+              </tr>
+              <tr>
+                <td>诊断</td>
+                <td><code>console.log</code>。</td>
+                <td>Fiber 状态、Effect 树、注册表枚举、错误堆栈拼接。</td>
+              </tr>
+              <tr>
+                <td>类型</td>
+                <td><code>any</code> 为主。</td>
+                <td>声明合并让服务名、事件名、配置都有类型。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout info">
+          <span class="label">关键洞察</span>
+          <p>
+            这 80 行代码的“核心逻辑”只占 Cordis 源码的一小部分；其余大部分代码在处理
+            <strong>失败、并发、重入、隔离和错误信息</strong>。框架的复杂度不是凭空来的，
+            它只是把你在生产环境迟早要写的边界处理，提前写好了。
+          </p>
+        </div>
+
+        <h2 id="side-by-side">同一个需求，两种写法</h2>
+        <p>
+          假设应用由三部分组成：数据库、统计、命令行。统计依赖数据库，命令行依赖两者。
+          下面是传统 main 与 Cordis 的对照：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">传统 main.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const db = await openDatabase(config.dbUrl)
+const stats = new Stats(db)
+const cli = new Cli(db, stats)
+
+await cli.start()
+console.log('app ready')
+
+process.on('SIGINT', async () =&gt; {
+  await cli.stop()
+  await stats.flush()
+  await db.close()
+  process.exit(0)
+})</code></pre>
+        </div>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">Cordis main.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const ctx = new Context()
+
+await ctx.plugin(Database, config)
+await ctx.plugin(Stats)
+await ctx.plugin(Cli)
+
+console.log('app ready')
+
+process.on('SIGINT', async () =&gt; {
+  await ctx.fiber.dispose()
+  process.exit(0)
+})</code></pre>
+        </div>
+
+        <p>表面上看，Cordis 版本甚至更短。真正的差别在“看不见的地方”：</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>问题</th><th>传统版本</th><th>Cordis 版本</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>数据库连接失败</td>
+                <td><code>openDatabase</code> 抛错，后面的代码不执行；需要自己保证清理。</td>
+                <td>插件 FAILED，<code>await ctx.plugin()</code> 抛错；已注册的 Effect 会回卷。</td>
+              </tr>
+              <tr>
+                <td>统计初始化慢</td>
+                <td>阻塞 main；或者手动改成并行并处理竞态。</td>
+                <td>Fiber 并行启动，依赖方等它就绪；不需要手写 Promise 编排。</td>
+              </tr>
+              <tr>
+                <td>换一个数据库实现</td>
+                <td>改 import、改构造、改类型。</td>
+                <td>换提供者插件；消费者不变。</td>
+              </tr>
+              <tr>
+                <td>测试时用假数据库</td>
+                <td>改 main 或引入依赖注入框架。</td>
+                <td>在子上下文里挂一个测试提供者。</td>
+              </tr>
+              <tr>
+                <td>运行中重载统计插件</td>
+                <td>几乎不可能，除非你自己实现卸载。</td>
+                <td><code>fiber.dispose()</code> + 重新 plugin；HMR 自动做。</td>
+              </tr>
+              <tr>
+                <td>关闭顺序</td>
+                <td>手写，且容易漏。</td>
+                <td>Fiber 树 + Effect 逆序，自动处理。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          注意：Cordis 并没有让“数据库连接”这件事本身变简单。它让<strong>连接与其他部分的关系</strong>变简单。
+          业务逻辑仍然要你自己写，错误仍然要你自己处理。
+        </p>
+
+        <h2 id="business-service">另一种“自己实现”：业务服务本身</h2>
+        <p>
+          如果你说的“服务”不是指框架，而是指一个具体业务能力（存储、通知、计费），那么两种写法的<strong>业务代码几乎一样</strong>，
+          区别只在“谁来创建、谁来注入、谁来关闭”。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">手写：服务由 main 创建和关闭</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const db = await openDatabase(config.dbUrl)
+const todos = new TodoStore(db)
+await todos.init()
+
+// ... 把 todos 传给需要它的模块
+
+await todos.close()
+await db.close()</code></pre>
+        </div>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">Cordis：服务由插件注册，生命周期归 Fiber</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">class TodoStore extends Service {
+  constructor(ctx: Context, config: Config) {
+    super(ctx, 'todoStore')
+  }
+
+  async [Service.init]() {
+    // ... 建立连接
+    return () =&gt; this.close()
+  }
+}
+
+export function apply(ctx: Context, config: Config) {
+  ctx.plugin(TodoStore, config)
+}</code></pre>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>维度</th><th>手写业务服务</th><th>Cordis 服务</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>业务方法</td><td>完全一样</td><td>完全一样</td></tr>
+              <tr><td>谁创建</td><td>main</td><td>提供者插件</td></tr>
+              <tr><td>谁找到它</td><td>手动传参 / import 单例</td><td>按服务名 inject</td></tr>
+              <tr><td>谁关闭</td><td>main 里的 close 调用</td><td>Effect / <code>Service.init</code> 返回的 disposer</td></tr>
+              <tr><td>换实现</td><td>改 main 与调用方</td><td>换提供者</td></tr>
+              <tr><td>多实例</td><td>自己传不同参数</td><td><code>isolate</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          所以“自己实现服务”与“用 Cordis 实现服务”并不冲突：业务逻辑可以原样保留，
+          你只是把“创建、寻址、关闭”这三件事交给了框架。第 11 章的 <code>TodoStore</code> 就是这种写法。
+        </p>
+
+        <h2 id="cost">代价对照</h2>
+        <p>
+          第 2 章列过 Cordis 的成本。放在与手写版本的对照里，这些成本更具体：
+        </p>
+        <ul>
+          <li><strong>代码量</strong>：Cordis 核心加上 loader 等包，远大于 80 行；但你的业务代码可能更少，因为编排和清理被移走了。</li>
+          <li><strong>启动时间</strong>：代理、依赖解析、模块导入都有开销。对 CLI 来说可能感知明显；对长期运行的服务通常可忽略。</li>
+          <li><strong>调试</strong>：直接调用栈最容易读；Cordis 的栈会穿过代理和事件分发。熟悉 Fiber 名称后会好很多。</li>
+          <li><strong>可预测性</strong>：手写版本的执行顺序一目了然；Cordis 的顺序由依赖决定，需要工具辅助观察。</li>
+          <li><strong>团队成本</strong>：每个新人都要学 Context、Fiber、Effect；小团队短期项目可能不划算。</li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="label">不要为了“架构感”引入框架</span>
+          <p>
+            如果你现在只有一个 main、三个模块、没有第三方扩展、也不打算热更新，那么手写版本不仅够用，
+            而且更容易维护。等到“换实现要改很多文件”“卸载总是漏东西”“配置开始分散”时，再引入 Cordis，
+            迁移成本反而更低——因为那时你已经知道它要解决什么。
+          </p>
+        </div>
+
+        <h2 id="lessons">自己实现一遍，能学到什么</h2>
+        <div class="chapter-grid">
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">依赖解析不是魔法</span></span>
+            <span class="cc-desc">它就是“查找 + 等待 + 通知”三件事。理解这一点，PENDING 就不再神秘。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">生命周期就是所有权</span></span>
+            <span class="cc-desc">谁创建、谁销毁、销毁时通知谁。Fiber 只是把这三件事显式化了。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">清理比创建难</span></span>
+            <span class="cc-desc">创建只有一条路径，清理要考虑异常、顺序、重复调用、异步未完成。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">复杂度藏在边界</span></span>
+            <span class="cc-desc">热更新时旧实例还在跑、卸载时又注册、提供者中途消失——这些才是框架的真正工作。</span>
+          </div>
+        </div>
+
+        <h2 id="when">决策清单</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>你的情况</th><th>建议</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>学习 Cordis / 想理解插件系统</td>
+                <td>先写一遍迷你版本，再读第 4–8 章。</td>
+              </tr>
+              <tr>
+                <td>一次性脚本、构建工具、代码生成</td>
+                <td>直接 main，不要引入框架。</td>
+              </tr>
+              <tr>
+                <td>要发布给别人用的库</td>
+                <td>暴露普通函数/类；不要强迫调用方接受 Cordis。</td>
+              </tr>
+              <tr>
+                <td>多人维护、需要第三方扩展</td>
+                <td>Cordis 值得；先从小范围插件开始。</td>
+              </tr>
+              <tr>
+                <td>需要运行中换实现、热更新</td>
+                <td>Cordis 几乎是必需；迷你版本很难补齐这些边界。</td>
+              </tr>
+              <tr>
+                <td>团队完全没经验、项目只有两周</td>
+                <td>先用 main；把服务边界设计好，未来再迁移。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>迷你版本证明了 Cordis 的核心思想并不复杂：注册、等待、通知、清理、广播。</li>
+            <li>Cordis 的额外价值主要在边界条件：依赖消失、重入、异步清理、隔离、错误诊断。</li>
+            <li>传统 main 与 Cordis 的差别不在代码长度，而在“关系”由谁维护。</li>
+            <li>框架有真实成本：启动、调试、学习、团队约定；小项目要谨慎。</li>
+            <li>最好的学习路径：先手写 80 行，再用 Cordis 重写同一个程序，对照差异。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>迷你版本的 <code>pending</code> 集合与 Cordis 的 Fiber 依赖跟踪，最本质的差别是什么？</summary>
+            <div class="answer">
+              <p>
+                迷你版本只有一个全局待办集合，谁缺依赖都往里塞，服务一到就全部重试；它不记录“某个插件依赖某个服务的哪个作用域版本”。
+                Cordis 为每个 Fiber 保存依赖快照（服务名 + 提供者 Fiber），因此能精确处理隔离、替换、提供者消失与重入。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>为什么说“框架的复杂度主要来自边界条件”？举两个例子。</summary>
+            <div class="answer">
+              <p>
+                例如：插件在异步初始化尚未完成时被卸载，框架要等初始化结束再清理；插件在卸载过程中又注册了新的 Effect，
+                框架要拒绝或正确纳入本次卸载。这些情况在正常路径上永远不会遇到，但在热更新和故障恢复时必然出现。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>如果一个项目只有 300 行、没有第三方扩展，你会建议用 Cordis 吗？</summary>
+            <div class="answer">
+              <p>
+                通常不会。这个规模下，main 的直白和低启动成本更有价值。可以先把“能力边界”设计好（例如用接口隔离数据库），
+                等出现替换、扩展、热更新需求时再迁移，成本并不高。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 10 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

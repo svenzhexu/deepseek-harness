@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 5 章 · 插件与 Fiber — Cordis 学习指南</title>
+  <meta name="description" content="Cordis 的三种插件形态、插件元数据、ctx.plugin 的返回值、Fiber 状态机、依赖变化与卸载顺序。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="05">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第二篇 · 核心概念</strong><br>
+      第 5 / 12 章<br>
+      约 25 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 5 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第二篇 · 核心概念</span><span class="dot"></span>
+            <span class="kicker-muted">第 05 章</span>
+          </div>
+          <h1>插件与 Fiber</h1>
+          <p class="lead">
+            插件是 Cordis 的功能单元，Fiber 是这个单元“这一次运行”的生命周期。理解了两者的分工，
+            你就能回答初学者最常问的三个问题：插件为什么没启动？它什么时候被卸载？我注册的东西为什么不消失？
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 入门</span>
+            <span class="chip"><strong>阅读</strong> 约 25 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 4 章</span>
+            <span class="chip"><strong>关键词</strong> 状态机 · PENDING · dispose</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>写出函数、对象、类三种插件，并知道何时用哪一种；</li>
+            <li>读懂 Fiber 的六个状态，尤其是 PENDING 与 FAILED；</li>
+            <li>用 <code>await ctx.plugin()</code> 与 <code>fiber.dispose()</code> 精确控制生命周期；</li>
+            <li>诊断“插件没有输出”的四步方法。</li>
+          </ul>
+        </div>
+
+        <h2 id="shapes">三种插件形态</h2>
+        <p>
+          Cordis 不要求插件继承某个基类，也不要求实现固定接口。它接受三种东西，并在内部统一成一个可执行回调：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">shapes.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+// 1. 函数插件：最轻量，直接调用
+const fnPlugin = (ctx: Context) =&gt; {
+  console.log('function plugin')
+}
+
+// 2. 对象插件：可以携带 name / inject / Config 等元数据
+const objectPlugin = {
+  name: 'object-plugin',
+  apply(ctx: Context) {
+    console.log('object plugin')
+  },
+}
+
+// 3. 类插件：被 new 出来，适合需要实例状态的场景
+class ClassPlugin {
+  constructor(public ctx: Context) {
+    console.log('class plugin')
+  }
+}
+
+const root = new Context()
+await root.plugin(fnPlugin)
+await root.plugin(objectPlugin)
+await root.plugin(ClassPlugin)</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>function plugin
+object plugin
+class plugin</code></pre>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>形态</th><th>怎么被调用</th><th>适合</th><th>注意</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>函数</td>
+                <td><code>plugin(ctx, config)</code></td>
+                <td>一次性装配、简单扩展、示例。</td>
+                <td>不能直接用 <code>this</code>；用 <code>Object.assign</code> 附加 <code>inject</code> 等元数据。</td>
+              </tr>
+              <tr>
+                <td>对象</td>
+                <td><code>plugin.apply(ctx, config)</code></td>
+                <td>需要可读的元数据、可复用的插件常量。</td>
+                <td>必须有 <code>apply</code> 方法，否则会被判为非法插件。</td>
+              </tr>
+              <tr>
+                <td>类</td>
+                <td><code>new plugin(ctx, config)</code></td>
+                <td>有实例状态、需要继承、要注册服务。</td>
+                <td>通常继承 <code>Service</code>，见第 6 章。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          通过 Loader 从文件加载时，模块通常导出一个 <code>apply</code> 函数和一些元数据，Loader 会把整个模块命名空间
+          当成“对象插件”来处理。所以你在第 1 章看到的写法，和这里的函数插件是兼容的，只是入口不同。
+        </p>
+
+        <h2 id="metadata">插件可以携带哪些元数据</h2>
+        <p>无论哪种形态，Cordis 都认识下面这些字段：</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>字段</th><th>作用</th><th>默认</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>name</code></td><td>显示名，用于日志、诊断和 Fiber 名称。</td><td>函数名或 <code>'root'</code></td></tr>
+              <tr><td><code>inject</code></td><td>声明依赖的服务名数组，或“服务名 → 配置”的对象。</td><td>无依赖</td></tr>
+              <tr><td><code>Config</code></td><td>配置 schema；启动前校验，失败则 FAILED。</td><td>不校验</td></tr>
+              <tr><td><code>provide</code></td><td>声明这个插件会提供的服务名（Loader 用来做静态分析）。</td><td>由运行时决定</td></tr>
+              <tr><td><code>intercept</code></td><td>声明需要读取哪些服务的 intercept 配置。</td><td>无</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          <code>inject</code> 有两种写法。数组形式最常见；对象形式可以为某个服务附带配置（intercept），
+          只有当服务作者支持时才有意义：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">inject-forms.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export const inject = ['db', 'logger']
+
+// 或者：为 logger 附带局部配置
+export const inject = {
+  db: null,
+  logger: { level: 3 },
+}</code></pre>
+        </div>
+
+        <h2 id="plugin-call">ctx.plugin 到底返回什么</h2>
+        <p>
+          每调用一次 <code>ctx.plugin()</code>，Cordis 就创建一个 <strong>Fiber</strong>。它既是运行实例的句柄，
+          也是一个“可等待对象”：你可以 <code>await</code> 它，等当前加载流程稳定，或捕获启动错误。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">fiber.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const root = new Context()
+
+const fiber = root.plugin(function demo(ctx) {
+  console.log('apply 开始')
+  ctx.effect(() =&gt; () =&gt; console.log('清理'))
+  console.log('apply 结束')
+})
+
+console.log('uid:', fiber.uid)
+await fiber
+console.log('state:', fiber.state)
+await fiber.dispose()
+console.log('disposed uid:', fiber.uid)</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>uid: 1
+apply 开始
+apply 结束
+state: 2
+清理
+disposed uid: null</code></pre>
+        </div>
+
+        <p>
+          <code>state: 2</code> 是 <code>FiberState.ACTIVE</code> 的数值。实际代码里不要硬编码数字，用
+          <code>fiber.state === FiberState.ACTIVE</code> 比较。要注意的是，<code>ctx.plugin()</code> 返回的
+          Fiber 是一个被包装过的对象：它带有 <code>then</code> 方法，所以既能当句柄用，也能直接 <code>await</code>。
+        </p>
+
+        <div class="callout info">
+          <span class="label">为什么 uid 会变 null</span>
+          <p>
+            <code>uid</code> 是 Fiber 在注册表里的唯一编号，根 Fiber 固定为 0。一旦开始卸载，Cordis 会把 <code>uid</code>
+            清空，表示“这个实例已经不属于任何注册表”。如果你在异步回调里看到 <code>uid === null</code>，
+            说明插件已经被卸载了，不应该再访问它的服务。
+          </p>
+        </div>
+
+        <div class="callout warn">
+          <span class="label">await 不等于“依赖已就绪”</span>
+          <p>
+            <code>await ctx.plugin()</code> 等待的是“当前加载流程稳定”，而不是“插件一定 ACTIVE”。
+            如果依赖缺失，Fiber 会合法地停在 PENDING，此时没有正在进行的初始化，<code>await</code> 会立刻返回。
+            要确认就绪，请检查 <code>fiber.state === FiberState.ACTIVE</code>；要等依赖出现，请挂载提供者或监听状态变化。
+          </p>
+        </div>
+
+        <h2 id="states">六个状态，一张图</h2>
+        <div class="diagram">
+          <div class="flow">
+            <div class="flow-node clay"><b>PENDING</b><small>等依赖</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>LOADING</b><small>执行 apply</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node accent"><b>ACTIVE</b><small>已就绪</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>UNLOADING</b><small>跑清理</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node"><b>DISPOSED</b><small>已释放</small></div>
+          </div>
+          <p class="small" style="margin:14px 0 0; text-align:center">
+            LOADING 抛错 → FAILED；ACTIVE 时依赖消失或配置更新 → UNLOADING → 重新 LOADING。
+          </p>
+          <figcaption>图 5-1　Fiber 状态机。PENDING 和 FAILED 是两种完全不同的“没输出”。</figcaption>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>状态</th><th>含义</th><th>此时能做什么</th><th>常见原因</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>PENDING</code></td>
+                <td>已创建，但依赖未齐，插件代码尚未执行。</td>
+                <td>等待；补上提供者。</td>
+                <td><code>inject</code> 中的服务没人提供，或提供者也在 PENDING。</td>
+              </tr>
+              <tr>
+                <td><code>LOADING</code></td>
+                <td>正在校验配置、执行插件函数。</td>
+                <td>等待 <code>await fiber</code>。</td>
+                <td>正常的启动过程；异步初始化会停留更久。</td>
+              </tr>
+              <tr>
+                <td><code>ACTIVE</code></td>
+                <td>插件已加载，服务已上线。</td>
+                <td>正常使用。</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td><code>FAILED</code></td>
+                <td>配置校验或插件函数抛错。</td>
+                <td>修复后更新配置或重新挂载。</td>
+                <td>schema 不匹配、<code>apply</code> 内异常。</td>
+              </tr>
+              <tr>
+                <td><code>UNLOADING</code></td>
+                <td>正在逆序执行清理。</td>
+                <td>等待 <code>dispose()</code> 完成。</td>
+                <td>主动卸载、依赖消失、热更新。</td>
+              </tr>
+              <tr>
+                <td><code>DISPOSED</code></td>
+                <td>已释放，不能再次启动。</td>
+                <td>重新 <code>plugin</code> 一个新实例。</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="pending">PENDING：最常见的“没有输出”</h2>
+        <p>
+          初学者最容易慌的时刻：插件写好了，也挂载了，控制台却什么都没有。<strong>先别改代码</strong>，
+          看看它是不是在等依赖。下面这个例子故意缺一个 <code>db</code>：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">pending.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context, FiberState } from '@deepseek-ai/cordis'
+
+const root = new Context()
+
+const fiber = root.plugin({
+  name: 'needs-db',
+  inject: ['db'],
+  apply() {
+    console.log('loaded!')
+  },
+})
+
+console.log('is pending:', fiber.state === FiberState.PENDING)
+
+// 补上提供者，Fiber 才会开始加载
+root.provide('db', {})
+
+await fiber
+console.log('is active:', fiber.state === FiberState.ACTIVE)</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>is pending: true
+loaded!
+is active: true</code></pre>
+        </div>
+
+        <p>
+          PENDING 不是错误，而是一种<strong>合法的等待状态</strong>。Cordis 不知道提供者会不会在五秒后、五分钟后来，
+          所以它选择等，而不是崩溃。这个设计让“先加载消费者、后加载提供者”成为可能，也让配置文件里的顺序变得无关紧要。
+        </p>
+
+        <div class="callout warn">
+          <span class="label">PENDING 的副作用</span>
+          <p>
+            处于 PENDING 的 Fiber 不会让 Node 的事件循环保持活跃。如果整个应用只有它一个“待办”，进程会安静地以状态码 0 退出，
+            看起来像“什么都没发生”。这不是 bug，而是“没有提供者，也没有其他工作”时的诚实结果。
+          </p>
+        </div>
+
+        <h3>诊断 PENDING 的四步</h3>
+        <ol>
+          <li><strong>列出所有 Fiber 的状态</strong>，找到 <code>PENDING</code> 的那个；</li>
+          <li>看它的 <code>inject</code> 列表，逐个确认有没有 <code>provide</code> / <code>Service</code> 注册同名服务；</li>
+          <li>检查提供者自己是不是也在 PENDING，或因为配置错误停在 FAILED；</li>
+          <li>如果用了 <code>isolate</code>，确认提供者和消费者在同一个隔离作用域里。</li>
+        </ol>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">diagnose.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { FiberState, type Context } from '@deepseek-ai/cordis'
+
+const STATE = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
+
+export function apply(ctx: Context) {
+  setTimeout(() =&gt; {
+    for (const runtime of ctx.registry.values()) {
+      for (const fiber of runtime.fibers) {
+        console.log(`${fiber.name}: ${STATE[fiber.state]}`)
+      }
+    }
+  }, 500)
+}</code></pre>
+        </div>
+
+        <p class="small">
+          这里的 <code>STATE</code> 数组顺序对应 <code>FiberState</code> 的枚举顺序。生产代码更推荐直接比较枚举成员，
+          或调用 <code>FiberState[fiber.state]</code>。
+        </p>
+
+        <h2 id="dependency">依赖不是一次性的</h2>
+        <p>
+          <code>inject</code> 不是“启动时检查一次”的静态声明。只要运行中提供者消失，依赖它的插件就会被卸载；
+          提供者回来，它又会重新加载。这保证了消费者永远不会持有一个已经失效的服务引用。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">reload.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const root = new Context()
+
+const provider = await root.plugin(function dbProvider(ctx) {
+  ctx.provide('db', { query: () =&gt; 'ok' })
+  ctx.effect(() =&gt; () =&gt; console.log('provider: down'))
+})
+
+const consumer = await root.plugin(Object.assign((ctx) =&gt; {
+  console.log('consumer: up')
+  ctx.effect(() =&gt; () =&gt; console.log('consumer: down'))
+}, { inject: ['db'] }))
+
+await provider.dispose()
+console.log('--- provider disposed ---')</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>consumer: up
+provider: down
+consumer: down
+--- provider disposed ---</code></pre>
+        </div>
+
+        <p>
+          提供者卸载会触发消费者卸载：<code>provider.dispose()</code> 返回时，消费者也已经清理完毕。
+          但两个清理日志的先后不是契约——它取决于 Effect 的注册顺序。这里提供者的清理函数注册得更晚，
+          所以先执行；真正保证的是“消费者不会继续持有一个已经下线的服务”。
+        </p>
+
+        <p>如果你不想让插件随提供者消失，可以改用可选依赖：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">optional.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const plugin = (ctx: Context) =&gt; {
+  const db = ctx.get('db')
+  if (!db) {
+    console.log('no db, running in degraded mode')
+    return
+  }
+  console.log('db is ready')
+}</code></pre>
+        </div>
+
+        <p>
+          可选依赖不会被 Fiber 跟踪，所以提供者消失时插件<strong>不会</strong>自动卸载。这是优点也是风险：
+          你必须在每次使用前重新判断，不能把 <code>db</code> 缓存到模块级变量里。
+        </p>
+
+        <h2 id="children">子插件与卸载完成</h2>
+        <p>
+          在插件的 <code>apply</code> 里再次调用 <code>ctx.plugin()</code>，新插件会成为当前 Fiber 的子节点。
+          父节点卸载时，子节点会作为父节点的一个 Effect 被卸载；父节点会等待子节点的异步清理完成。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">children.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const parent = root.plugin(function parentPlugin(ctx) {
+  ctx.plugin(function childPlugin(ctx) {
+    ctx.effect(() =&gt; () =&gt; console.log('child down'))
+  })
+  ctx.effect(() =&gt; () =&gt; console.log('parent down'))
+})
+
+await parent
+await parent.dispose()</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>parent down
+child down</code></pre>
+        </div>
+
+        <p>
+          这里父清理先执行，是因为它比“子插件”更晚注册；Effect 按注册逆序撤销。
+          顺序本身不是契约：真正保证的是 <code>parent.dispose()</code> 返回时，子插件也已经清理完毕。
+          如果你需要“先关子、再关父”的严格顺序，把它们放进同一个 disposer 里显式 <code>await</code>，
+          而不是依赖注册顺序。
+        </p>
+
+        <h2 id="methods">Fiber 上常用的成员</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>成员</th><th>类型</th><th>用途</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>fiber.ctx</code></td><td><code>Context</code></td><td>这个插件运行所在的子上下文。</td></tr>
+              <tr><td><code>fiber.state</code></td><td><code>FiberState</code></td><td>当前状态；诊断时最有用。</td></tr>
+              <tr><td><code>fiber.name</code></td><td><code>string</code></td><td>沿父链找到的显示名，根为 <code>'root'</code>。</td></tr>
+              <tr><td><code>fiber.uid</code></td><td><code>number | null</code></td><td>注册表编号；卸载后为 <code>null</code>。</td></tr>
+              <tr><td><code>fiber.dispose()</code></td><td><code>() =&gt; Promise&lt;void&gt;</code></td><td>卸载插件及其子插件，等待清理完成。</td></tr>
+              <tr><td><code>await fiber</code></td><td><code>PromiseLike&lt;Fiber&gt;</code></td><td>等待启动稳定；启动错误会在这里抛出。</td></tr>
+              <tr><td><code>fiber.update(config)</code></td><td><code>(config) =&gt; void</code></td><td>校验新配置并重启插件；HMR 用它。</td></tr>
+              <tr><td><code>fiber.restart()</code></td><td><code>() =&gt; Promise&lt;void&gt;</code></td><td>用当前配置卸载再加载。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout tip">
+          <span class="label">什么时候需要保存 Fiber</span>
+          <p>
+            大多数插件不需要保存自己的 Fiber——Cordis 会在父节点卸载时处理。需要保存的典型场景是：
+            你想在运行中主动卸载某个子插件（例如“关闭某个功能”），或者测试里需要精确控制启动/停止。
+          </p>
+        </div>
+
+        <h2 id="errors">插件出错时会发生什么</h2>
+        <ul>
+          <li><strong>插件形态非法</strong>：<code>ctx.plugin(42)</code> 会同步抛错，提示需要函数或带 <code>apply</code> 的对象。</li>
+          <li><strong>配置校验失败</strong>：Fiber 进入 FAILED，<code>await fiber</code> 会抛出 <code>ValidationError</code>，错误信息指出字段路径。</li>
+          <li><strong>apply 抛错</strong>：Cordis 记录错误，Fiber 进入 FAILED；<code>await fiber</code> 会把原错误抛给调用方。</li>
+          <li><strong>清理函数抛错</strong>：错误会被 logger 记录，不会阻止其他清理继续执行；但资源可能处于不一致状态。</li>
+          <li><strong>参数插件已卸载</strong>：在已卸载的父上下文里再调用 <code>ctx.plugin</code>，会抛出 <code>INACTIVE_EFFECT</code>。</li>
+        </ul>
+
+        <p>
+          一个容易忽略的细节：Cordis 默认用 logger 记录启动错误，而 logger 默认只把消息放进内存缓冲区。
+          如果你没有挂载控制台导出器，错误可能“看不见”。调试时加上
+          <code>@deepseek-ai/cordis-plugin-logger-console</code>，或者自己注册一个 exporter。
+        </p>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>插件有三种形态：函数、<code>{ apply }</code> 对象、类；Cordis 在内部统一成回调。</li>
+            <li><code>name</code>、<code>inject</code>、<code>Config</code>、<code>provide</code> 是插件最重要的元数据。</li>
+            <li>每次 <code>ctx.plugin()</code> 产生一个 Fiber；它可等待、可卸载、可更新。</li>
+            <li>PENDING 是等依赖，FAILED 是出错；两者的排查方向完全不同。</li>
+            <li>依赖会持续跟踪：提供者消失，消费者卸载；提供者回来，消费者重载。</li>
+            <li>父插件卸载会一并卸载子插件，并等待子插件的异步清理完成；具体先后遵循 Effect 的逆序规则。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>函数插件和对象插件，除了写法之外最重要的区别是什么？</summary>
+            <div class="answer">
+              <p>
+                对象插件可以自然地携带 <code>name</code>、<code>inject</code>、<code>Config</code> 等元数据；
+                函数插件也能通过 <code>Object.assign</code> 附加这些字段，但可读性差一些。运行时的调用方式也略有不同：
+                函数被直接调用，对象调用其 <code>apply</code>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>插件停在 PENDING，你会按什么顺序排查？</summary>
+            <div class="answer">
+              <p>
+                先枚举 Fiber 状态确认是 PENDING；再读该插件的 <code>inject</code> 列表；然后逐个查找同名服务的提供者，
+                确认提供者不是 FAILED/PENDING；最后检查 <code>isolate</code> 作用域是否一致。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>为什么“先加载消费者、后加载提供者”也能工作？</summary>
+            <div class="answer">
+              <p>
+                消费者会停在 PENDING，等提供者注册服务时，Cordis 通过 Reflect 通知所有依赖该服务的 Fiber，
+                重新计算依赖并唤醒它们。加载顺序由依赖关系决定，而不是配置文件或代码顺序。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 5 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

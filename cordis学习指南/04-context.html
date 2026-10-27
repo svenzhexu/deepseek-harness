@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 4 章 · Context：能力面板 — Cordis 学习指南</title>
+  <meta name="description" content="理解 Cordis 的 Context：服务解析、根与子上下文、上下文隔离、intercept、get 与 provide，以及常见误用。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="04">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第二篇 · 核心概念</strong><br>
+      第 4 / 12 章<br>
+      约 20 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 4 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第二篇 · 核心概念</span><span class="dot"></span>
+            <span class="kicker-muted">第 04 章</span>
+          </div>
+          <h1>Context：能力面板</h1>
+          <p class="lead">
+            在 Cordis 的代码里，<code>ctx</code> 几乎无处不在。它看起来只是一个参数，实际却同时扮演三个角色：
+            服务的容器、插件的作用域、生命周期的归属。这一章我们把 <code>ctx</code> 拆开，看看它到底是怎么找到
+            <code>ctx.db</code> 的。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 入门</span>
+            <span class="chip"><strong>阅读</strong> 约 20 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 3 章</span>
+            <span class="chip"><strong>关键词</strong> 服务解析 · 隔离 · 作用域</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>解释 <code>ctx.foo</code> 与 <code>ctx.get('foo')</code> 的区别；</li>
+            <li>用 <code>provide</code> 注册服务，并理解为什么它能自动撤销；</li>
+            <li>用 <code>isolate</code> 让两个分支看到不同的实现；</li>
+            <li>避开“用错上下文注册”这个最常见的泄漏来源。</li>
+          </ul>
+        </div>
+
+        <h2 id="proxy">ctx 不是普通对象</h2>
+        <p>
+          第一次看到 <code>ctx.db</code>，很容易以为 <code>db</code> 是某个对象上的普通属性。其实不是。
+          Cordis 给每个上下文套了一个 <strong>Proxy</strong>：当你读取一个属性时，代理会去服务仓库里按名字查找实现。
+        </p>
+        <p>这带来两个直接结果：</p>
+        <ul>
+          <li><strong>按名字寻址</strong>：你不需要知道 <code>db</code> 是哪个类的实例，也不需要 import 它。</li>
+          <li><strong>运行时检查依赖</strong>：在插件上下文里，读取一个不在祖先链上的服务却没用 <code>inject</code>，Cordis 会直接报错，而不是返回 <code>undefined</code> 让你在更远的地方崩掉。</li>
+        </ul>
+
+        <div class="callout analogy">
+          <span class="label">类比 · 配电箱与房间</span>
+          <p>
+            根上下文是整栋楼的配电箱；每个插件拿到的是自己房间的“分电箱”。房间里的插座名字（<code>db</code>、<code>logger</code>）
+            和楼里一致，但某个房间可以单独接一条线路（隔离），不影响其他房间。
+          </p>
+        </div>
+
+        <h2 id="read">读取：get 与属性访问</h2>
+        <p>
+          先看一个完整的对比例子。它注册一个 <code>greeting</code> 服务，然后分别在“没有 inject”和“有 inject”的插件里读取它。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">read.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    greeting: string
+  }
+}
+
+const root = new Context()
+
+const provider = root.plugin(function greetingProvider(ctx) {
+  ctx.provide('greeting', 'hello')
+})
+
+const withoutInject = (ctx: Context) =&gt; {
+  console.log('get:', ctx.get('greeting'))
+
+  try {
+    console.log('property:', ctx.greeting)
+  } catch (error) {
+    console.log('error:', (error as Error).message)
+  }
+}
+
+await provider
+await root.plugin(withoutInject)</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>get: hello
+error: cannot get property "greeting" without inject</code></pre>
+        </div>
+
+        <p>
+          同一个服务，两种读法，行为不同。这里的 <code>greeting</code> 由<strong>兄弟插件</strong>提供，
+          不在消费者的祖先链上，所以属性读取会失败：
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>写法</th><th>是否要求 inject</th><th>找不到时</th><th>适用场景</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ctx.greeting</code></td>
+                <td>当提供者不在祖先链上时</td>
+                <td>沿父链到根仍找不到，抛出异常并提示缺少 inject</td>
+                <td>强依赖；插件没有它就活不了。</td>
+              </tr>
+              <tr>
+                <td><code>ctx.get('greeting')</code></td>
+                <td>否</td>
+                <td>返回 <code>undefined</code></td>
+                <td>可选依赖；没有也能降级运行。</td>
+              </tr>
+              <tr>
+                <td><code>ctx.get('greeting', false)</code></td>
+                <td>否</td>
+                <td>即使提供者未激活也能拿到值</td>
+                <td>诊断、调试；普通业务不要用。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>加上 <code>inject</code> 之后，属性读取就合法了，而且类型也更自然：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">read-injected.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    greeting: string
+  }
+}
+
+const root = new Context()
+const provider = root.plugin(function greetingProvider(ctx) {
+  ctx.provide('greeting', 'hello')
+})
+
+const plugin = Object.assign((ctx: Context) =&gt; {
+  console.log(ctx.greeting)
+}, { inject: ['greeting'] })
+
+await provider
+await root.plugin(plugin)</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>hello</code></pre>
+        </div>
+
+        <div class="callout info">
+          <span class="label">属性访问会沿父链查找</span>
+          <p>
+            在根上下文或祖先插件里提供的服务，子插件即使没写 <code>inject</code> 也能读到——它们就在父链上。
+            真正触发“without inject”报错的，是<strong>兄弟分支或其他子树</strong>提供的服务：它们不在父链上，
+            Cordis 不会去全局仓库里“捞”，而是要求你用 <code>inject</code> 明确声明。
+            <code>ctx.get</code> 则是显式的全局查找，不受父链限制。
+          </p>
+        </div>
+
+        <h2 id="provide">写入：provide、set 与 Service</h2>
+        <p>
+          服务是怎么进入上下文的？最底层的方法是 <code>ctx.provide(name, value)</code>：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">provide.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const root = new Context()
+const dispose = root.provide('clock', {
+  now: () =&gt; Date.now(),
+})
+
+console.log(root.get('clock').now() &gt; 0)
+
+dispose()
+console.log(root.get('clock'))</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>true
+undefined</code></pre>
+        </div>
+
+        <p>
+          <code>provide</code> 返回一个销毁函数。它被注册为当前 Fiber 的一个 Effect，所以即使你不手动调用，
+          插件卸载时它也会执行。手动调用则让服务立刻下线，等待它的插件会收到通知。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>API</th><th>用途</th><th>注意</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ctx.provide(name, value)</code></td>
+                <td>注册一个服务值</td>
+                <td>同一作用域内不能重复注册同名服务。</td>
+              </tr>
+              <tr>
+                <td><code>ctx.set(name, value)</code></td>
+                <td>更新自己提供的服务值</td>
+                <td>只有提供这个服务的 Fiber 才能改。</td>
+              </tr>
+              <tr>
+                <td><code>class X extends Service</code></td>
+                <td>以类的方式提供服务</td>
+                <td>推荐用于真正的“能力”，见第 6 章。</td>
+              </tr>
+              <tr>
+                <td><code>ctx.accessor(name, options)</code></td>
+                <td>定义一个计算属性</td>
+                <td>适合派生值，不适合有状态的服务。</td>
+              </tr>
+              <tr>
+                <td><code>ctx.mixin(source, keys)</code></td>
+                <td>把服务的成员转发到 ctx 上</td>
+                <td>框架内部大量使用；普通插件少用。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>provide 与 Service 怎么选</h3>
+        <p>
+          <code>provide</code> 是底层原语，适合极小的值或测试替身；<code>Service</code> 是它的“带类型、可继承、可配置”的封装。
+          如果你要提供的能力有方法、有状态、可能需要被替换，用 <code>Service</code>；如果只是一个常量或简单对象，
+          <code>provide</code> 就够了。两者在运行时的归宿相同：都进入 Reflect 的服务仓库，都随 Fiber 卸载。
+        </p>
+
+        <h2 id="tree">上下文是一棵树</h2>
+        <p>
+          每次 <code>ctx.plugin()</code>，Cordis 都会基于当前上下文创建一个子上下文，并把它和新建的 Fiber 绑定。
+          子上下文通过原型链继承父上下文的所有能力，同时拥有自己的服务作用域和生命周期归属。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">tree.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const root = new Context()
+
+const parent = root.plugin(function parentPlugin(ctx) {
+  ctx.provide('name', 'parent')
+  console.log('parent sees:', ctx.get('name'))
+
+  ctx.plugin(function childPlugin(ctx) {
+    console.log('child sees:', ctx.get('name'))
+    console.log('same root:', ctx.root === root)
+  })
+})
+
+await parent
+await parent.dispose()</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>parent sees: parent
+child sees: parent
+same root: true</code></pre>
+        </div>
+
+        <p>
+          子上下文能看到父上下文提供的服务；父上下文看不到子上下文新增的服务。这与 JavaScript 的原型链一致：
+          查找从当前节点开始，逐级向上，直到根。<code>ctx.root</code> 始终指向同一个根上下文。
+        </p>
+
+        <div class="callout danger">
+          <span class="label">易错 · 用错上下文注册</span>
+          <p>
+            在插件里，如果你把外层的 <code>root</code> 传进回调，并用 <code>root.on(...)</code> 注册监听器，
+            这个监听器会记在<strong>根 Fiber</strong>名下，而不是当前插件。插件卸载时，它不会被清理。
+            规则很简单：<strong>在哪个上下文里注册，就归哪个 Fiber 管</strong>。插件内部请始终使用参数传入的 <code>ctx</code>。
+          </p>
+        </div>
+
+        <h2 id="isolate">隔离：同一棵树，不同的世界</h2>
+        <p>
+          假设你要在一个进程里跑两个租户，各自有独立的数据库连接。直接共享一个 <code>db</code> 服务显然不行；
+          为每个租户改一套服务名又会污染全局命名空间。<code>isolate</code> 解决的正是这个问题。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">isolate.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const root = new Context()
+root.provide('db', 'main-db')
+
+const tenantA = root.isolate('db')
+const tenantB = root.isolate('db')
+
+tenantA.provide('db', 'tenant-a-db')
+tenantB.provide('db', 'tenant-b-db')
+
+console.log('root    :', root.get('db'))
+console.log('tenant A:', tenantA.get('db'))
+console.log('tenant B:', tenantB.get('db'))</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>root    : main-db
+tenant A: tenant-a-db
+tenant B: tenant-b-db</code></pre>
+        </div>
+
+        <div class="diagram">
+          <div class="branch">
+            <div class="branch-head">root：db = main-db</div>
+            <div class="node"><b>tenantA</b>db = tenant-a-db<br><span class="small">独立作用域</span></div>
+            <div class="node"><b>tenantB</b>db = tenant-b-db<br><span class="small">独立作用域</span></div>
+          </div>
+          <figcaption>图 4-1　每个子上下文可以拥有自己的 db 实现，互不覆盖。</figcaption>
+        </div>
+
+        <p>
+          <code>isolate(name)</code> 每次调用都会创建一个<strong>新的作用域标签</strong>。如果你希望两个上下文共享同一个隔离域，
+          可以显式传入同一个标签：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">shared-scope.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const scope = Symbol('team-a')
+
+const a1 = root.isolate('db', scope)
+const a2 = root.isolate('db', scope)
+
+a1.provide('db', 'shared-db')
+console.log(a2.get('db')) // shared-db</code></pre>
+        </div>
+
+        <p>
+          这正是 Loader 的 <code>isolate</code> 配置项背后的机制：<code>isolate: { db: true }</code> 为单个条目创建独立域；
+          <code>isolate: { db: 'team-a' }</code> 则让多个条目共享同一个命名域。第 9 章会看到具体写法。
+        </p>
+
+        <h2 id="intercept">intercept：只改配置，不换实现</h2>
+        <p>
+          有些服务支持“局部配置覆盖”，例如日志级别、默认模型、超时时间。它们不是换一个实现，而是让同一实现在不同分支里
+          读到不同的配置。<code>ctx.intercept(name, config)</code> 就是为此准备的：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">intercept.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">const quiet = root.intercept('logger', { level: 0 })
+const verbose = root.intercept('logger', { level: 3 })
+
+quiet.plugin((ctx) =&gt; {
+  ctx.logger.info('这条不会显示')
+})
+
+verbose.plugin((ctx) =&gt; {
+  ctx.logger.info('这条会显示')
+})</code></pre>
+        </div>
+
+        <p>
+          <code>intercept</code> 只对声明了 <code>[Service.config]</code> 的服务生效，而且如何合并由服务自己决定。
+          不用太早深入它：先记住“<strong>isolation 换实现，intercept 改配置</strong>”这个区分就够了。
+          上面的输出来自 <code>logger-console</code> 导出器；没有它，日志只会进入内存缓冲区。
+        </p>
+
+        <h2 id="mistakes">四个常见错误</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>错误</th><th>后果</th><th>正确做法</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>在插件里用外层 <code>root</code> 注册</td>
+                <td>注册归根 Fiber，插件卸载后仍然存活</td>
+                <td>始终使用回调参数里的 <code>ctx</code></td>
+              </tr>
+              <tr>
+                <td>把 <code>ctx</code> 存到模块级变量</td>
+                <td>热更新后仍指向旧 Fiber，读到已释放的服务</td>
+                <td>在插件函数内部使用；需要跨调用保存时存服务，不存 ctx</td>
+              </tr>
+              <tr>
+                <td>忘了 <code>inject</code> 就用 <code>ctx.foo</code></td>
+                <td>插件直接 FAILED，或读到错误的作用域</td>
+                <td>强依赖写进 <code>inject</code>；可选依赖用 <code>ctx.get</code></td>
+              </tr>
+              <tr>
+                <td>重复 <code>provide</code> 同名服务</td>
+                <td>后注册者报错：“service has been registered”</td>
+                <td>先确认没有提供者；需要多实例就用 <code>isolate</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout tip">
+          <span class="label">一个判断技巧</span>
+          <p>
+            当你写下 <code>ctx.xxx</code> 时，问自己两个问题：<strong>这个服务是谁提供的？</strong>
+            <strong>我声明依赖了吗？</strong> 如果答不上来，先用 <code>ctx.get('xxx')</code> 打印一下，
+            或者去注册表里搜 <code>provide('xxx')</code> / <code>super(ctx, 'xxx')</code>。
+          </p>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li><code>ctx</code> 是代理：属性读取会按名字解析服务，并对不在祖先链上的服务强制 <code>inject</code>。</li>
+            <li><code>ctx.get</code> 用于可选依赖，找不到返回 <code>undefined</code>；属性访问用于强依赖。</li>
+            <li><code>provide</code> 注册服务并返回销毁函数；<code>Service</code> 是它更高层的封装。</li>
+            <li>上下文是一棵树：子能看到父，父看不到子；注册归当前 Fiber 所有。</li>
+            <li><code>isolate</code> 换实现，<code>intercept</code> 改配置；两者都只影响子分支。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>为什么插件里 <code>ctx.greeting</code> 会报错，而 <code>ctx.get('greeting')</code> 不会？</summary>
+            <div class="answer">
+              <p>
+                属性访问被视为强依赖：Cordis 要求插件先通过 <code>inject</code> 声明，才会在 Fiber 上建立依赖快照。
+                <code>get</code> 是显式的可选取值，不要求 inject，因此找不到时返回 <code>undefined</code>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>两个租户需要不同的 <code>db</code>，应该用 <code>intercept</code> 还是 <code>isolate</code>？</summary>
+            <div class="answer">
+              <p>
+                用 <code>isolate</code>。它隔离的是服务<strong>实现</strong>的查找作用域，让两个分支各自解析到不同的提供者。
+                <code>intercept</code> 只改变同一实现的配置，不改变“谁来提供”。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>在插件回调里把外层 <code>root</code> 传给 <code>setTimeout</code>，然后用 <code>root.on</code> 注册监听器，会有什么问题？</summary>
+            <div class="answer">
+              <p>
+                监听器会注册到根 Fiber 上，插件卸载时不会被移除，造成泄漏或“卸载后还在响应”。
+                应改为使用回调参数 <code>ctx</code>，并确保异步回调捕获的是这个 <code>ctx</code>。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 4 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

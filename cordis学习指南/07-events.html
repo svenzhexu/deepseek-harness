@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 7 章 · 事件：互不相识也能协作 — Cordis 学习指南</title>
+  <meta name="description" content="Cordis 类型化事件、五种分发模式、waterfall 中间件、监听器选项与常见错误。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="07">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第二篇 · 核心概念</strong><br>
+      第 7 / 12 章<br>
+      约 30 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 7 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第二篇 · 核心概念</span><span class="dot"></span>
+            <span class="kicker-muted">第 07 章</span>
+          </div>
+          <h1>事件：互不相识也能协作</h1>
+          <p class="lead">
+            服务适合“我需要调用一个能力”，事件适合“发生了一件事，关心的人自己来处理”。
+            前者是点对点，后者是广播。Cordis 在广播之上又加了顺序、并发、短路和中间件，
+            让事件不只是“通知”，还能表达策略。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 入门</span>
+            <span class="chip"><strong>阅读</strong> 约 30 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 6 章</span>
+            <span class="chip"><strong>关键词</strong> 分发模式 · waterfall · 短路</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>用声明合并定义类型安全的事件；</li>
+            <li>区分 emit、parallel、serial、bail、waterfall 五种分发模式；</li>
+            <li>写出正确的 waterfall 中间件，知道什么时候必须调用 <code>next()</code>；</li>
+            <li>避免“异步监听器没被等待”和“忘记 next 吞掉下游”这两个大坑。</li>
+          </ul>
+        </div>
+
+        <h2 id="why">为什么需要事件</h2>
+        <p>
+          假设每次新增待办，都要更新统计。最直接的做法是在新增逻辑里调用统计服务：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">没有事件</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">async function addTodo(title: string) {
+  const todo = await store.add(title)
+  await stats.record('todo_added')   // 新增逻辑必须知道统计器
+  await notifier.push('new todo')    // 还要知道通知器
+  return todo
+}</code></pre>
+        </div>
+
+        <p>
+          每多一个“关心新增”的功能，<code>addTodo</code> 就要多一行。它从业务函数变成了“所有副作用的调度中心”，
+          而且每加一个功能都要改它、重新测试它。
+        </p>
+        <p>用事件改写后，新增逻辑只负责“宣布这件事发生了”：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">有事件</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">async function addTodo(title: string) {
+  const todo = await store.add(title)
+  ctx.emit('todo/added', todo)       // 谁关心，谁自己来听
+  return todo
+}</code></pre>
+        </div>
+
+        <p>
+          统计器、通知器、审计日志各自订阅 <code>todo/added</code>，新增逻辑不需要认识它们。
+          这就是<strong>发布 / 订阅</strong>：生产者只负责发布，消费者只负责订阅，双方通过事件名相遇。
+        </p>
+
+        <h2 id="declare">声明一个事件</h2>
+        <p>
+          Cordis 的事件是类型化的。和给 <code>Context</code> 加服务一样，用声明合并给 <code>Events</code> 接口加成员：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">events.d.ts（或任意被导入的 .ts）</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'todo/added'(todo: { title: string; done: boolean }): void
+    'todo/completed'(todo: { title: string; done: boolean }): void
+  }
+}</code></pre>
+        </div>
+
+        <p>
+          成员签名里的参数，就是监听器收到的参数；返回值就是分发方法能拿到的值。事件名只是字符串，
+          但声明合并让它获得了完整的类型检查：写错名字、少传参数、用错分发方式，编辑器都会提醒。
+        </p>
+
+        <div class="callout info">
+          <span class="label">命名约定</span>
+          <p>
+            推荐使用 <code>命名空间/动作</code> 的形式，例如 <code>todo/added</code>、<code>tools/result</code>、
+            <code>approval/request</code>。扁平的事件名空间很容易冲突，前缀能让来源一目了然。
+            <code>internal/</code> 开头的事件由框架使用，插件不要占用。
+          </p>
+        </div>
+
+        <h2 id="emit-on">发送与监听</h2>
+        <p>
+          下面是一个完整例子：<code>StatsService</code> 在计数变化时发出事件，根上下文上的监听器负责打印。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">stats.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context, Service } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    stats: StatsService
+  }
+  interface Events {
+    'stats/report'(name: string, count: number): void
+  }
+}
+
+class StatsService extends Service {
+  private counts = new Map&lt;string, number&gt;()
+
+  constructor(ctx: Context) {
+    super(ctx, 'stats')
+  }
+
+  bump(name: string) {
+    const next = (this.counts.get(name) ?? 0) + 1
+    this.counts.set(name, next)
+    this.ctx.emit('stats/report', name, next)
+  }
+}
+
+const root = new Context()
+await root.plugin(StatsService)
+
+root.on('stats/report', (name, count) =&gt; {
+  console.log(`[stats] ${name} -&gt; ${count}`)
+})
+
+root.stats.bump('tool_call')
+root.stats.bump('tool_call')
+root.stats.bump('prompt')</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>[stats] tool_call -&gt; 1
+[stats] tool_call -&gt; 2
+[stats] prompt -&gt; 1</code></pre>
+        </div>
+
+        <p>
+          <code>ctx.on()</code> 返回一个移除监听器的函数，同时它本身也是一个 Effect：所属 Fiber 卸载时，
+          监听器自动移除，不需要手动 <code>removeListener</code>。如果只想监听一次，用 <code>ctx.once()</code>。
+        </p>
+
+        <h2 id="modes">五种分发模式</h2>
+        <p>
+          同一个事件，可以用五种方式分发。选哪一种不是风格问题，而是<strong>事件契约的一部分</strong>：
+          监听器能不能返回值、能不能并发、能不能短路，都由它决定。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>模式</th><th>调用</th><th>是否等待</th><th>顺序 / 返回值</th><th>适合</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>emit</code></td>
+                <td><code>ctx.emit(name, ...args)</code></td>
+                <td>否</td>
+                <td>按注册顺序同步调用；忽略返回值与 Promise。</td>
+                <td>纯通知：日志、统计、刷新 UI。</td>
+              </tr>
+              <tr>
+                <td><code>parallel</code></td>
+                <td><code>await ctx.parallel(...)</code></td>
+                <td>是</td>
+                <td>全部并发；等所有监听器结束；任一出错抛 <code>AggregateError</code>。</td>
+                <td>多个独立的异步副作用，需要全部完成。</td>
+              </tr>
+              <tr>
+                <td><code>serial</code></td>
+                <td><code>await ctx.serial(...)</code></td>
+                <td>是</td>
+                <td>按顺序逐个等待；第一个“命中值”停止并返回。</td>
+                <td>优先级链：前面的处理者可以先接管。</td>
+              </tr>
+              <tr>
+                <td><code>bail</code></td>
+                <td><code>ctx.bail(...)</code></td>
+                <td>否</td>
+                <td>同步版 serial；第一个命中值停止并返回。</td>
+                <td>同步的“谁能处理就谁处理”。</td>
+              </tr>
+              <tr>
+                <td><code>waterfall</code></td>
+                <td><code>ctx.waterfall(name, ...args, next)</code></td>
+                <td>否（由调用方 await）</td>
+                <td>环绕中间件：调用 <code>next()</code> 委托，返回值可被逐层包装；不调用则短路。</td>
+                <td>拦截、改写、否决一个决策。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          “命中值”的定义是：<strong>不是 <code>null</code>、不是 <code>false</code>、也不是 <code>undefined</code></strong>。
+          注意 <code>0</code> 和空字符串 <code>''</code> 都算命中；如果你需要表达“未处理”，请返回
+          <code>null</code> 或 <code>undefined</code>，不要返回 <code>false</code> 然后期待它继续。
+        </p>
+
+        <h3>选择哪一种？</h3>
+        <ul>
+          <li>只是“通知一下”，没人需要回值 → <code>emit</code>；</li>
+          <li>多个异步副作用都要完成，缺一不可 → <code>parallel</code>；</li>
+          <li>按优先级依次询问，先能处理的赢 → <code>serial</code>（异步）或 <code>bail</code>（同步）；</li>
+          <li>需要“包住”一个决策，改写输入/输出，或者直接否决 → <code>waterfall</code>。</li>
+        </ul>
+
+        <h2 id="waterfall">waterfall：洋葱一样的中间件</h2>
+        <p>
+          waterfall 是 Cordis 最强大、也最容易用错的模式。每个监听器收到原始参数和一个 <code>next()</code>：
+          调用 <code>next()</code> 会把控制权交给下一个监听器，最后是<strong>调用方传入的默认逻辑</strong>
+          （也就是 <code>ctx.waterfall</code> 的最后一个参数）；不调用就直接返回，则表示“我接管了，后面的不用执行”。
+        </p>
+
+        <div class="diagram">
+          <div class="onion">
+            <div class="onion-row">
+              <span class="onion-box deep">listener 1</span>
+              <span class="onion-note">→ 调用 next() →</span>
+              <span class="onion-box">listener 2</span>
+              <span class="onion-note">→ 调用 next() →</span>
+              <span class="onion-box">默认行为</span>
+            </div>
+            <div class="onion-row">
+              <span class="onion-note">← 包装返回值 ←</span>
+              <span class="onion-box deep">listener 1</span>
+              <span class="onion-note">← 包装返回值 ←</span>
+              <span class="onion-box">listener 2</span>
+              <span class="onion-note">← 返回结果</span>
+              <span class="onion-box">默认行为</span>
+            </div>
+          </div>
+          <figcaption>图 7-1　请求向内传递，结果向外包装；任何一层不调用 next()，内层都不会执行。</figcaption>
+        </div>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">waterfall.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'demo/transform'(input: string, next: () =&gt; Promise&lt;string&gt;): Promise&lt;string&gt;
+  }
+}
+
+const root = new Context()
+
+// 监听器 1：包装下游结果
+root.on('demo/transform', async (input, next) =&gt; {
+  const downstream = await next()
+  return downstream.toUpperCase()
+})
+
+// 监听器 2：拥有决定权时短路
+root.on('demo/transform', async (input, next) =&gt; {
+  if (input.includes('blocked')) return '** blocked **'
+  return next()
+})
+
+console.log(await root.waterfall('demo/transform', 'hello', async () =&gt; 'hello'))
+console.log(await root.waterfall('demo/transform', 'blocked words', async () =&gt; 'blocked words'))</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>HELLO
+** BLOCKED **</code></pre>
+        </div>
+
+        <p>第二行为什么是大写？把调用过程拆开看：</p>
+        <ol>
+          <li>监听器 1 先运行，调用 <code>next()</code>，进入监听器 2；</li>
+          <li>监听器 2 看到 <code>blocked</code>，直接返回，<strong>没有</strong>调用 <code>next()</code>；</li>
+          <li>于是最内层的默认函数没有执行，返回的是 <code>'** blocked **'</code>；</li>
+          <li>监听器 1 拿到这个返回值，执行 <code>toUpperCase()</code>，变成 <code>'** BLOCKED **'</code>。</li>
+        </ol>
+
+        <div class="callout danger">
+          <span class="label">最重要的一条纪律</span>
+          <p>
+            <strong>只观察、只记录、只标注的 waterfall 监听器，必须调用 <code>next()</code>。</strong>
+            如果忘了，它会静默吞掉所有下游行为——没有报错，没有日志，默认逻辑就是不执行。
+            这是 Cordis 项目里最隐蔽的 bug 之一。
+          </p>
+        </div>
+
+        <h3>prepend：插到最前面</h3>
+        <p>
+          默认按注册顺序，先注册的在外层。如果你必须在所有普通监听器之前运行（例如强制审计、安全策略），
+          可以用 <code>prepend</code>：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">prepend.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">root.on('demo/transform', async (input, next) =&gt; {
+  console.log('always first')
+  return next()
+}, { prepend: true })
+
+// 简写：root.on(name, listener, true)</code></pre>
+        </div>
+
+        <p>
+          不要习惯性地加 <code>prepend</code>。它会让你的监听器绕过正常的注册顺序，多个插件都这么做时，
+          顺序会变得难以推理。只有“必须早于所有人”的语义才值得使用。
+        </p>
+
+        <h2 id="async">异步与错误</h2>
+        <p>
+          这是第二个大坑：<code>emit</code> <strong>不会等待</strong>监听器返回的 Promise。
+          下面这段代码看起来会依次打印，实际上 <code>after</code> 很可能先出现：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">emit-async.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'demo/async'(): void
+  }
+}
+
+root.on('demo/async', async () =&gt; {
+  await new Promise(resolve =&gt; setTimeout(resolve, 100))
+  console.log('listener done')
+})
+
+root.emit('demo/async')
+console.log('after emit')</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>after emit
+listener done</code></pre>
+        </div>
+
+        <p>
+          如果必须等所有异步监听器完成，用 <code>await ctx.parallel(...)</code>；如果必须按顺序等待，
+          用 <code>await ctx.serial(...)</code>。不要用 <code>emit</code> 然后期待 Promise 被收集。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>场景</th><th>行为</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>emit</code> 的监听器同步抛错</td><td>异常向调用方传播，后续监听器不再执行。</td></tr>
+              <tr><td><code>emit</code> 的监听器返回 rejected Promise</td><td>不会被等待，可能成为未处理的 Promise rejection。</td></tr>
+              <tr><td><code>parallel</code> 中任一监听器抛错</td><td>等待所有结束后，抛出包含全部错误的 <code>AggregateError</code>。</td></tr>
+              <tr><td><code>serial</code> / <code>bail</code> 中抛错</td><td>立即向调用方传播，后续监听器不执行。</td></tr>
+              <tr><td><code>waterfall</code> 中抛错</td><td>向调用方传播；已经进入的下游不会自动回滚。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="service-vs-event">事件还是服务？</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>问题</th><th>用服务</th><th>用事件</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>我需要一个确定的能力</td><td>是</td><td>否</td></tr>
+              <tr><td>我需要一个返回值</td><td>是</td><td>可以（serial / waterfall），但更绕</td></tr>
+              <tr><td>我想让多个互不相识的插件都知道</td><td>否</td><td>是</td></tr>
+              <tr><td>我想允许插件改写或否决一个决策</td><td>不适合</td><td>是（waterfall）</td></tr>
+              <tr><td>我关心“谁在监听”吗</td><td>关心提供者</td><td>不关心</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          经验法则：<strong>直接调用能力用服务，传播事实或插入策略用事件。</strong>
+          如果你发现自己在事件监听器里到处找返回值、拼装复杂的结果，可能它本来就应该是一个服务方法。
+        </p>
+
+        <h2 id="mistakes">四个常见错误</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>错误</th><th>后果</th><th>修正</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>waterfall 监听器忘记 <code>next()</code></td>
+                <td>下游与默认行为被静默跳过</td>
+                <td>只观察就 <code>return next()</code>；要否决才直接返回</td>
+              </tr>
+              <tr>
+                <td>用 <code>emit</code> 触发异步工作</td>
+                <td>调用方以为完成了，实际还在跑</td>
+                <td>改 <code>parallel</code> / <code>serial</code> 并 await</td>
+              </tr>
+              <tr>
+                <td>事件名没有命名空间</td>
+                <td>与别的插件冲突，监听器收到意外事件</td>
+                <td>用 <code>yourApp/action</code> 形式</td>
+              </tr>
+              <tr>
+                <td>在监听器里做耗时同步计算</td>
+                <td>阻塞所有后续监听器与调用方</td>
+                <td>拆成异步任务，或改为队列 / 后台 job</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout tip">
+          <span class="label">调试事件的好习惯</span>
+          <p>
+            遇到“事件没反应”，先确认三件事：事件名拼写一致吗？声明合并被导入到了吗（类型不对不一定影响运行，但说明模块没加载）？
+            监听器是在事件发出<strong>之前</strong>注册的吗？<code>emit</code> 不保留历史，错过就是错过。
+          </p>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>事件用于广播事实；服务用于直接调用能力，两者解决不同问题。</li>
+            <li>用 <code>interface Events</code> 声明事件名与签名，获得完整类型检查。</li>
+            <li>五种模式：emit / parallel / serial / bail / waterfall，选择取决于“是否等待、是否有返回值、是否短路”。</li>
+            <li>waterfall 是环绕中间件；<code>next()</code> 委托，不调用则短路；观察型监听器必须调用。</li>
+            <li><code>emit</code> 不等待异步监听器；需要等待就用 parallel 或 serial。</li>
+            <li><code>ctx.on</code> 是 Effect，监听器随插件自动移除。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>“通知所有插件刷新缓存”应该用哪种分发模式？为什么？</summary>
+            <div class="answer">
+              <p>
+                如果刷新是异步的、且需要等全部完成，用 <code>parallel</code>；如果只是发个通知、不关心完成时间，用 <code>emit</code>。
+                关键是明确“调用方是否需要等待”。用 <code>emit</code> 触发异步刷新，会让调用方误以为缓存已经更新。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>waterfall 中，一个只做日志的监听器直接 <code>return</code> 而不调用 <code>next()</code>，会发生什么？</summary>
+            <div class="answer">
+              <p>
+                链条在这里短路：后续监听器和最内层的默认行为都不会执行，而且通常没有任何报错。
+                这就是“观察型监听器必须调用 <code>next()</code>”的原因。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary><code>serial</code> 的监听器返回 <code>false</code>，会停止后续监听器吗？</summary>
+            <div class="answer">
+              <p>
+                不会。<code>false</code>、<code>null</code>、<code>undefined</code> 都被视为“未命中”，会继续执行。
+                要短路，请返回一个非 <code>false</code> / 非空的值，例如 <code>true</code>、对象或字符串。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 7 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

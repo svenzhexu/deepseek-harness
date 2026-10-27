@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 2 章 · 为什么需要 Cordis — Cordis 学习指南</title>
+  <meta name="description" content="从耦合、启动顺序、资源清理、实现替换、配置与热更新六个痛点，理解 Cordis 的设计动机、代价与适用边界。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="02">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第一篇 · 认识 Cordis</strong><br>
+      第 2 / 12 章<br>
+      约 15 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 2 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第一篇 · 认识 Cordis</span><span class="dot"></span>
+            <span class="kicker-muted">第 02 章</span>
+          </div>
+          <h1>为什么需要 Cordis</h1>
+          <p class="lead">
+            一个框架能流行，通常不是因为它“功能多”，而是因为它让某类错误变得难以发生。
+            这一章我们把 Cordis 放回它诞生的场景：一个不断长大的应用、一群互不相识的插件、以及一个必须长期维护的团队。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 零基础</span>
+            <span class="chip"><strong>阅读</strong> 约 15 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 1 章</span>
+            <span class="chip"><strong>关键词</strong> 耦合 · 生命周期 · 代价</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>用一个真实场景解释“为什么 main 会失控”；</li>
+            <li>把六个常见痛点对应到 Cordis 的具体机制；</li>
+            <li>说清 Cordis 的代价，而不是只背优点；</li>
+            <li>用一张清单判断自己的项目是否值得引入 Cordis。</li>
+          </ul>
+        </div>
+
+        <h2 id="premise">先承认一件事：main 函数很好</h2>
+        <p>
+          第 1 章那段二十行的待办程序，比任何框架都更值得作为起点。它没有隐藏的控制流，没有需要学习的生命周期，
+          出错时堆栈直接指向那一行代码。<strong>简单，本身就是一种竞争力。</strong>
+        </p>
+        <p>
+          所以“为什么需要 Cordis”这个问题，不能靠“因为 main 很烂”来回答。更准确的说法是：
+          <strong>当程序从“一个人写一次”变成“一群人改很多次”，main 所承担的角色会悄悄变化。</strong>
+          它从“执行步骤”变成了“系统的装配说明书”，而装配说明书是最不适合写死在代码里的东西。
+        </p>
+
+        <h2 id="story">一个小应用的长大过程</h2>
+        <p>还是那个待办清单。我们把它按时间线拉长一点：</p>
+
+        <h3>v1：一个文件，二十行</h3>
+        <p>读写 JSON，增删改查。没有任何抽象，也不需要。此时引入 Cordis 是过度设计。</p>
+
+        <h3>v2：加一个“统计”功能</h3>
+        <p>
+          你想知道每天新增了多少待办。<code>main</code> 里多了一行 <code>const stats = new Stats(db)</code>，
+          每次 <code>add</code> 之后调用 <code>stats.record()</code>。能跑，但“新增待办”这件事现在同时知道数据库和统计器。
+        </p>
+
+        <h3>v3：加一个 HTTP 接口</h3>
+        <p>
+          为了给手机用，你包了一层 HTTP。路由处理函数直接 <code>import { db }</code>，又直接 <code>import { stats }</code>。
+          依赖关系从“main 里的几行”扩散到了每个文件。
+        </p>
+
+        <h3>v4：允许第三方写扩展</h3>
+        <p>
+          有人想加“导出为 Markdown”，有人想加“到期提醒”。你不可能让每个扩展作者都来改你的 <code>main.ts</code>，
+          更不敢让他们直接碰你的数据库连接。你需要一种机制：<strong>让扩展自己声明需要什么，由宿主决定给不给、什么时候给。</strong>
+        </p>
+
+        <h3>v5：运行中改配置</h3>
+        <p>
+          用户想在设置页里把存储从本地文件切到 PostgreSQL，不重启进程。你发现：数据库连接是在 main 里创建的，
+          统计器持有它的引用，HTTP 路由缓存了它——要换，得把所有持有者一起拆掉再重建。而“所有持有者”是谁，
+          你已经数不清了。
+        </p>
+
+        <p>
+          走到这里，问题已经不是“代码写得不够漂亮”，而是<strong>系统缺少一套关于“能力、依赖、生命周期”的公共语言</strong>。
+          Cordis 提供的正是这套语言。
+        </p>
+
+        <div class="callout info">
+          <span class="label">一句话</span>
+          <p>
+            框架的价值，不在于让你少写代码，而在于让<strong>某一类错误变得难以发生</strong>。
+            Cordis 瞄准的那类错误是：依赖关系失控、启动顺序靠猜、资源清理靠自觉、替换实现靠改调用方。
+          </p>
+        </div>
+
+        <h2 id="pains">六个反复出现的痛点</h2>
+        <p>
+          下面每一条都来自真实的工程现场，而不是教科书上的假设。每条后面，是 Cordis 给出的机制；先看思路，细节留到后面章节。
+        </p>
+
+        <h3>痛点 1 · 谁都被谁认识：编译期耦合</h3>
+        <p>
+          使用方直接 <code>import</code> 提供方的类，意味着“使用方”在编译时就绑定了“某一个实现”。
+          想换成测试用的内存版、云上的托管版，或者让第三方提供另一版，都得改使用方的代码。
+        </p>
+        <p>
+          <strong>Cordis 的答案：按名字寻址。</strong> 使用方只声明“我需要 <code>db</code> 这个服务”，
+          不关心它是文件、PostgreSQL 还是内存实现。提供方以 <code>db</code> 这个名字注册，双方在运行时通过 Context 相遇。
+        </p>
+
+        <h3>痛点 2 · 启动顺序靠人记</h3>
+        <p>
+          <code>db</code> 必须在 <code>auth</code> 前，<code>migrate</code> 必须在 <code>auth</code> 前，
+          <code>stats</code> 又必须在 <code>server</code> 前。顺序写在注释里，靠 code review 维持；某天有人插入一行，
+          线上就多了一次空指针。
+        </p>
+        <p>
+          <strong>Cordis 的答案：依赖驱动加载。</strong> 插件声明 <code>inject: ['db']</code>，Cordis 就让它在
+          <code>PENDING</code> 状态等着；<code>db</code> 一出现，它自动进入 <code>ACTIVE</code>。顺序不再由文件位置决定，
+          而由依赖关系推导出来。
+        </p>
+
+        <h3>痛点 3 · 注册容易，撤销难</h3>
+        <p>
+          插件注册了一个定时器、一个文件监听、一个事件回调、一个工具。卸载时，你得逐一记得清理。
+          漏掉一个，就是内存泄漏或“卸载后还在跑”的幽灵行为；清理顺序错了，还会在关闭时抛异常。
+        </p>
+        <p>
+          <strong>Cordis 的答案：注册即副作用（Effect）。</strong> 所有通过 Cordis API 建立的注册都自动记在当前 Fiber 名下；
+          需要自己管理的资源，用 <code>ctx.effect()</code> 包起来并返回一个销毁函数。卸载时按规则统一撤销，
+          不需要“记得”。
+        </p>
+
+        <h3>痛点 4 · 换一个实现，牵动全身</h3>
+        <p>
+          测试环境想用假时钟，本地想用 SQLite，生产用 PostgreSQL，多租户还想让每个租户看到自己的数据库。
+          每换一次，就要改 import、改构造、改启动参数，甚至改业务代码。
+        </p>
+        <p>
+          <strong>Cordis 的答案：提供者与消费者分离，再加作用域隔离。</strong> 换实现只需要换“提供者”；
+          <code>isolate</code> 可以让同一棵插件树里的两个分支看到不同的 <code>db</code>，互不影响。
+        </p>
+
+        <h3>痛点 5 · 配置散落在代码和文档里</h3>
+        <p>
+          端口、路径、开关、模型名、超时……有的在环境变量里，有的写死在常量里，有的只存在于 README。
+          改错一个，程序启动到一半才崩，错误信息还指向无关的地方。
+        </p>
+        <p>
+          <strong>Cordis 的答案：配置是插件契约的一部分。</strong> 插件声明一个 schema，Loader 在启动前校验；
+          配置来自 <code>cordis.yml</code>，可以分组、拆分、按环境覆盖。错误配置在加载时明确失败，而不是运行到一半才炸。
+        </p>
+
+        <h3>痛点 6 · 改一行代码要重启整个进程</h3>
+        <p>
+          调一个提示词、改一个工具描述，都要重启、重新登录、重新连数据库。对于长期运行的 agent 服务，这会让迭代速度慢得难以忍受。
+        </p>
+        <p>
+          <strong>Cordis 的答案：可逆的生命周期让热更新成为可能。</strong> 卸载旧插件 → 加载新插件，
+          只要每个插件都正确地释放了自己的 Effect，替换就是安全的。HMR 只是在这个能力上加了一个文件监听器。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>痛点</th><th>传统做法</th><th>Cordis 机制</th><th>你需要付出的</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>耦合</td>
+                <td>直接 import 实现</td>
+                <td>Service + <code>inject</code></td>
+                <td>给能力起稳定名字</td>
+              </tr>
+              <tr>
+                <td>顺序</td>
+                <td>手写初始化序列</td>
+                <td>依赖驱动的 Fiber 状态机</td>
+                <td>接受“PENDING 是合法状态”</td>
+              </tr>
+              <tr>
+                <td>清理</td>
+                <td>手写 close / removeListener</td>
+                <td>Effect + Fiber 统一撤销</td>
+                <td>每条注册都要有 disposer</td>
+              </tr>
+              <tr>
+                <td>替换</td>
+                <td>改 import / 改 main</td>
+                <td>换提供者 + <code>isolate</code></td>
+                <td>理解作用域</td>
+              </tr>
+              <tr>
+                <td>配置</td>
+                <td>常量 + 环境变量 + 文档</td>
+                <td>Schema + Loader</td>
+                <td>维护 schema 与配置文件</td>
+              </tr>
+              <tr>
+                <td>演化</td>
+                <td>重启进程</td>
+                <td>可逆生命周期 + HMR</td>
+                <td>严格遵守 Effect 纪律</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="ideas">它借了哪些成熟思想</h2>
+        <p>
+          Cordis 并不发明新理论。它把几个已经被验证过的思想，组合成了一个具体可用的运行时：
+        </p>
+        <div class="chapter-grid">
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">控制反转与依赖注入</span></span>
+            <span class="cc-desc">对象不自己创建依赖，而是由容器在合适的时机注入。Cordis 的注入不是构造函数参数，而是上下文属性。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">微内核</span></span>
+            <span class="cc-desc">内核只负责注册、解析、生命周期；所有具体能力都是插件。内核小，系统才能长得大。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">发布 / 订阅</span></span>
+            <span class="cc-desc">事件让“发出通知”和“处理通知”解耦。Cordis 在此之上加了顺序、并发、短路与中间件语义。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">RAII 式资源管理</span></span>
+            <span class="cc-desc">“获取资源”与“释放资源”绑定在同一个作用域里。Cordis 用 Effect 把这件事带到了 JavaScript。</span>
+          </div>
+        </div>
+        <p>
+          包描述里称它为 <strong>Meta-Framework</strong>（元框架）：普通框架提供一组确定的 API，让你在里面填业务；
+          元框架提供的是“组合框架的框架”，具体有哪些能力、如何装配，由插件和配置决定。
+        </p>
+
+        <div class="callout info">
+          <span class="label">官方目标</span>
+          <p>
+            Cordis 把自己的目标概括为四件事：<strong>显式依赖注入</strong>、<strong>作用域服务</strong>、
+            <strong>生命周期管理的清理</strong>、<strong>可选的配置驱动加载</strong>。
+            它们正好对应前面六个痛点的解法——前三个是运行层，最后一个是装配层。
+          </p>
+        </div>
+
+        <h2 id="cost">代价：Cordis 不是免费的</h2>
+        <p>
+          只讲优点的教程不值得信。引入 Cordis 会带来真实的成本，而且这些成本在项目早期尤其明显：
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>代价</th><th>具体表现</th><th>缓解方式</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>间接性</strong></td>
+                <td>IDE 里不能从 <code>ctx.db</code> 直接跳到实现；要按服务名搜注册点。</td>
+                <td>统一命名规范；用声明合并补类型；维护服务目录。</td>
+              </tr>
+              <tr>
+                <td><strong>隐式失败</strong></td>
+                <td>依赖缺失时插件停在 PENDING，没有任何输出，看起来像“代码没生效”。</td>
+                <td>启动后检查 fiber 状态；把 PENDING 写进诊断日志。</td>
+              </tr>
+              <tr>
+                <td><strong>调试跨度</strong></td>
+                <td>调用栈会穿过 Context 代理和事件分发，比直接调用更长。</td>
+                <td>先定位“哪个插件”，再看具体函数；利用 fiber 名称。</td>
+              </tr>
+              <tr>
+                <td><strong>学习曲线</strong></td>
+                <td>Context、Fiber、Effect、waterfall 都要理解，才能写对。</td>
+                <td>先写小例子；本指南第 10 章用 80 行实现帮助建立直觉。</td>
+              </tr>
+              <tr>
+                <td><strong>约定成本</strong></td>
+                <td>服务要起名、事件要声明、每个注册都要有 disposer。</td>
+                <td>把规则固化成模板和 code review 检查项。</td>
+              </tr>
+              <tr>
+                <td><strong>运行时开销</strong></td>
+                <td>代理、Fiber、事件分发都有成本。对普通应用通常可忽略，但极热路径要留意。</td>
+                <td>热路径直接调用服务方法，不要每次走事件。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout danger">
+          <span class="label">最常见的误用</span>
+          <p>
+            把 Cordis 当成“更高级的 main”：所有插件仍然互相 import，只是外面套了一层 <code>ctx.plugin</code>。
+            这样既没有获得解耦，又增加了间接性，是双输。判断标准很简单：
+            <strong>删掉提供者的 import 后，消费者还能编译和运行吗？</strong>
+          </p>
+        </div>
+
+        <h2 id="when">一张清单：你的项目需要 Cordis 吗</h2>
+        <p>不需要精确打分。如果下面有 <strong>三项以上</strong>为“是”，Cordis 很可能值得；如果只有一项，先别急。</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>问题</th><th>为什么重要</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>会有第三方或多人分别写扩展吗？</td><td>需要稳定的扩展点与依赖声明。</td></tr>
+              <tr><td>同一种能力有多个实现，需要按环境切换吗？</td><td>服务寻址与隔离能省掉大量条件分支。</td></tr>
+              <tr><td>需要在运行中改配置或替换实现吗？</td><td>可逆生命周期是热更新的前提。</td></tr>
+              <tr><td>资源多、清理容易漏吗？（连接、监听、定时器、子进程）</td><td>Effect 能把“记得清理”变成默认行为。</td></tr>
+              <tr><td>需要多实例或多租户隔离吗？</td><td><code>isolate</code> 比手写命名空间更彻底。</td></tr>
+              <tr><td>这是一个长期运行、需要可观测的服务吗？</td><td>Fiber 状态、插件目录、依赖关系都可用于诊断。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>反过来说，这些情况通常不必用：</strong></p>
+        <ul>
+          <li>代码少于几百行、只有你一个人维护的脚本；</li>
+          <li>一次性数据处理、构建脚本、代码生成器；</li>
+          <li>要被别人 <code>import</code> 的纯库——库不应该强迫调用方接受一个运行时；</li>
+          <li>对启动时间和包体积极度敏感的 CLI；</li>
+          <li>团队里没有人愿意维护这层抽象，且项目生命周期很短。</li>
+        </ul>
+
+        <h2 id="why-now">为什么这几年又火起来</h2>
+        <p>
+          Cordis 最早服务的是聊天机器人：大量第三方插件、需要热更新、需要按用户隔离、需要在不重启的情况下改配置。
+          Agent 运行时几乎是同一组需求的放大版：
+        </p>
+        <ul>
+          <li><strong>能力多</strong>：工具、文件系统、终端、浏览器、子智能体、模型提供方，每一项都可能被替换；</li>
+          <li><strong>参与者多</strong>：官方插件、实验插件、用户自带插件，不能都改主程序；</li>
+          <li><strong>生命周期长</strong>：会话持续数小时，配置和插件可能在运行中变化；</li>
+          <li><strong>策略复杂</strong>：审批、沙箱、预算、模型路由，需要在调用链上插入可组合的策略。</li>
+        </ul>
+        <p>
+          DeepSeek Harness 选择 Cordis 作为底座，本质上是在回答：“当 agent 的能力和策略都变成可插拔的零件时，
+          用什么来保证它们能安全地拼在一起？” 这也解释了为什么它的插件数量会如此之多，却仍然能保持相对清晰的结构。
+        </p>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>main 不是“错的”；它的问题在于把<strong>装配知识</strong>锁进了代码，难以替换和演化。</li>
+            <li>Cordis 用六种机制回应六个痛点：服务寻址、依赖驱动、Effect、隔离、配置校验、可逆生命周期。</li>
+            <li>它组合了 IoC、微内核、发布订阅、RAII 等成熟思想，定位是“组合框架的元框架”。</li>
+            <li>代价真实存在：间接性、PENDING 静默、学习曲线、约定成本；小项目要谨慎。</li>
+            <li>判断标准不是“项目大不大”，而是“是否需要多方扩展、替换、热更新与长期维护”。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>用一句话说明：为什么“把所有东西放进 main”在项目变大后会失效？</summary>
+            <div class="answer">
+              <p>
+                因为依赖关系、启动顺序和清理责任都集中在一个文件里，只存在于作者脑中；每加一个功能，都要修改同一处，
+                并且无法在不影响其他模块的情况下替换实现。问题不在文件本身，而在<strong>知识没有分散到各自的模块里</strong>。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>“依赖驱动加载”具体解决了什么问题？它又带来了什么新问题？</summary>
+            <div class="answer">
+              <p>
+                解决了手工编排顺序的问题：插件只要声明 <code>inject</code>，就会等到依赖就绪再启动。
+                新问题是：依赖永远缺失时，插件会安静地停在 PENDING，不报错也不输出，需要额外的诊断手段。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>如果你只做一个 300 行的本地脚本，会用 Cordis 吗？为什么？</summary>
+            <div class="answer">
+              <p>
+                通常不会。没有第三方扩展、没有实现替换、没有长期运行的生命周期，引入框架只会增加阅读成本和启动开销。
+                但如果你预计它半年后会变成多人维护的插件化工具，提前建立服务边界也可能是合理的——关键是<strong>为未来的变化付费，而不是为框架而框架</strong>。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 2 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

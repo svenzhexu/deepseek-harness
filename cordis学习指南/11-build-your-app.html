@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 11 章 · 实战：开发自己的程序 — Cordis 学习指南</title>
+  <meta name="description" content="从零用 Cordis 写一个待办 CLI：服务、事件、依赖、配置、Loader、测试与打包的完整步骤。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="11">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第四篇 · 对照与实战</strong><br>
+      第 11 / 12 章<br>
+      约 60 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 11 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第四篇 · 对照与实战</span><span class="dot"></span>
+            <span class="kicker-muted">第 11 章</span>
+          </div>
+          <h1>实战：开发自己的程序</h1>
+          <p class="lead">
+            这一章不再讲新概念，而是把前面所有东西拼起来：一个能真正使用的待办清单 CLI。
+            它有服务、事件、依赖、配置、错误处理、测试，也可以加上 HMR。跟着做完，你会得到一套可以继续扩展的项目骨架。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 动手</span>
+            <span class="chip"><strong>用时</strong> 约 60 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 4–9 章</span>
+            <span class="chip"><strong>产物</strong> 可运行的 todo CLI</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">完成后你会得到</span>
+          <ul>
+            <li>一个支持 <code>add</code> / <code>list</code> / <code>done</code> 的命令行程序；</li>
+            <li>一个带 schema 校验、可被替换的存储服务；</li>
+            <li>一个通过事件解耦的统计插件；</li>
+            <li>一份可读的 <code>cordis.yml</code>，以及一组能跑的测试；</li>
+            <li>知道下一步如何把它扩展成多列表、Web API 或 SQLite 版本。</li>
+          </ul>
+        </div>
+
+        <h2 id="goal">先看最终效果</h2>
+        <p>项目完成后，在终端里可以这样用：</p>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>$ node --import tsx ../../vendor/cordis/bin.js add "买牛奶"
+[store] loaded 0 todos
+[stats] +1 (1) 买牛奶
+已添加 #1: 买牛奶
+
+$ node --import tsx ../../vendor/cordis/bin.js list
+[store] loaded 1 todos
+○ #1 买牛奶
+
+$ node --import tsx ../../vendor/cordis/bin.js done 1
+[store] loaded 1 todos
+[stats] done #1 买牛奶
+已完成 #1: 买牛奶
+
+$ node --import tsx ../../vendor/cordis/bin.js list
+[store] loaded 1 todos
+✓ #1 买牛奶</code></pre>
+        </div>
+
+        <p>整个项目只有四个源文件：</p>
+
+        <div class="diagram">
+          <div class="stack">
+            <div class="layer"><span class="lyr-tag">配置</span><div class="lyr-body"><b>cordis.yml</b><small>决定装哪些插件、传什么配置</small></div></div>
+            <div class="stack-arrow">↓</div>
+            <div class="layer"><span class="lyr-tag">服务</span><div class="lyr-body"><b>store.ts</b><small>TodoStore：读写 JSON，提供 add / complete / list，发出事件</small></div></div>
+            <div class="stack-arrow">↓</div>
+            <div class="layer"><span class="lyr-tag">观察</span><div class="lyr-body"><b>stats.ts</b><small>监听 todo/added 与 todo/completed，打印统计</small></div></div>
+            <div class="stack-arrow">↓</div>
+            <div class="layer"><span class="lyr-tag">入口</span><div class="lyr-body"><b>cli.ts</b><small>解析命令行，调用 TodoStore，不直接读写文件</small></div></div>
+          </div>
+          <figcaption>图 11-1　四个文件，对应 Cordis 的四个核心概念：配置、服务、事件、依赖。</figcaption>
+        </div>
+
+        <h2 id="setup">第 0 步：创建项目目录</h2>
+        <p>
+          在本仓库根目录执行（<code>tmp/</code> 已被 git 忽略，随便折腾）：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">sh</span></div>
+          <pre><code class="language-sh">mkdir -p tmp/cordis-guide
+cd tmp/cordis-guide</code></pre>
+        </div>
+
+        <p>最终结构如下。先不用全部创建，跟着步骤走即可：</p>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">目录结构</span><span class="code-lang">text</span></div>
+          <pre><code>tmp/cordis-guide/
+├── cordis.yml
+├── store.ts
+├── stats.ts
+├── cli.ts
+├── todos.json        # 首次 add 后自动生成
+└── tests/
+    └── store.test.ts</code></pre>
+        </div>
+
+        <div class="callout info">
+          <span class="label">这章默认你在本仓库里</span>
+          <p>
+            项目放在 <code>tmp/</code> 下，所以不用额外安装依赖，启动器直接使用 <code>vendor/</code> 里的 Cordis。
+            把项目移出仓库时，先安装对应的 Cordis 包，再用第 8 步的 <code>main.ts</code> 启动；业务代码一行不用改。
+          </p>
+        </div>
+
+        <h2 id="store">第 1 步：写存储服务</h2>
+        <p>
+          先写 <code>store.ts</code>。它负责四件事：加载 JSON、保存 JSON、提供增删改查、在变化时发出事件。
+          注意它<strong>不关心命令行</strong>，也不知道谁在监听。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">store.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { readFile, writeFile } from 'node:fs/promises'
+import { Service, type Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+
+export interface Todo {
+  id: number
+  title: string
+  done: boolean
+}
+
+export interface Config {
+  file: string
+}
+
+export const name = 'todo-store'
+
+export const Config: Schema&lt;Config&gt; = Schema.object({
+  file: Schema.string().default('./todos.json'),
+})
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    todoStore: TodoStore
+  }
+  interface Events {
+    'todo/added'(todo: Todo): void
+    'todo/completed'(todo: Todo): void
+  }
+}
+
+export class TodoStore extends Service {
+  private todos: Todo[] = []
+  private nextId = 0
+
+  constructor(ctx: Context, public config: Config) {
+    super(ctx, 'todoStore')
+  }
+
+  async [Service.init]() {
+    try {
+      const content = await readFile(this.config.file, 'utf8')
+      this.todos = JSON.parse(content) as Todo[]
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    this.nextId = this.todos.reduce((max, todo) =&gt; Math.max(max, todo.id), 0)
+    console.log(`[store] loaded ${this.todos.length} todos`)
+  }
+
+  async add(title: string) {
+    const todo: Todo = { id: ++this.nextId, title, done: false }
+    this.todos.push(todo)
+    await this.save()
+    this.ctx.emit('todo/added', todo)
+    return todo
+  }
+
+  async complete(id: number) {
+    const todo = this.todos.find((todo) =&gt; todo.id === id)
+    if (!todo) throw new Error(`todo #${id} not found`)
+    if (!todo.done) {
+      todo.done = true
+      await this.save()
+      this.ctx.emit('todo/completed', todo)
+    }
+    return todo
+  }
+
+  list() {
+    return [...this.todos]
+  }
+
+  private async save() {
+    await writeFile(this.config.file, JSON.stringify(this.todos, null, 2))
+  }
+}
+
+export function apply(ctx: Context, config: Config) {
+  ctx.plugin(TodoStore, config)
+}</code></pre>
+        </div>
+
+        <p>这段代码里有几个值得停下来看的点：</p>
+        <ul>
+          <li>
+            <strong><code>export const Config</code></strong>：告诉 Loader“我的配置长这样”。<code>file</code>
+            有默认值，所以即使 yml 里不写，也能启动。
+          </li>
+          <li>
+            <strong><code>declare module</code></strong>：把 <code>todoStore</code> 加进 <code>Context</code>，
+            把两个事件加进 <code>Events</code>。它只影响类型，不生成运行时代码。
+          </li>
+          <li>
+            <strong><code>[Service.init]</code></strong>：构造函数只做注册，异步加载放到 init。加载失败会让插件 FAILED，
+            不会留下半初始化状态。
+          </li>
+          <li>
+            <strong><code>this.ctx.emit</code></strong>：服务只负责“宣布发生了什么”，不负责“谁来处理”。
+          </li>
+          <li>
+            <strong><code>export function apply</code></strong>：Loader 加载的是这个函数插件；它再把
+            <code>TodoStore</code> 作为子插件挂载。服务注册归子 Fiber 管。
+          </li>
+        </ul>
+
+        <h2 id="stats">第 2 步：写一个只监听事件的插件</h2>
+        <p>
+          <code>stats.ts</code> 不认识 <code>TodoStore</code>，也不需要 <code>inject</code>。它只是订阅两个事件，
+          在事件发生时打印一行。这就是“发布 / 订阅”的好处：新增统计功能不需要改存储代码。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">stats.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import type { Todo } from './store.ts'
+
+export const name = 'todo-stats'
+
+let added = 0
+
+export function apply(ctx: Context) {
+  ctx.on('todo/added', (todo: Todo) =&gt; {
+    added += 1
+    console.log(`[stats] +1 (${added}) ${todo.title}`)
+  })
+
+  ctx.on('todo/completed', (todo: Todo) =&gt; {
+    console.log(`[stats] done #${todo.id} ${todo.title}`)
+  })
+}</code></pre>
+        </div>
+
+        <div class="callout warn">
+          <span class="label">模块级状态与热更新</span>
+          <p>
+            这里的 <code>added</code> 是模块级变量。普通运行没问题，但 HMR 重新导入模块时它会归零。
+            真实项目里如果需要跨重载保留状态，应该把计数放进一个服务，或用持久化存储。
+            这个例子故意保留模块变量，是为了让你看到这个边界。
+          </p>
+        </div>
+
+        <h2 id="cli">第 3 步：写命令行入口</h2>
+        <p>
+          <code>cli.ts</code> 是唯一接触 <code>process.argv</code> 的插件。它声明依赖 <code>todoStore</code>，
+          因此 Cordis 会等存储初始化完成后再执行它。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cli.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import type { Todo } from './store.ts'
+
+export const name = 'todo-cli'
+export const inject = ['todoStore']
+
+function print(todos: Todo[]) {
+  if (!todos.length) {
+    console.log('（还没有待办）')
+    return
+  }
+  for (const todo of todos) {
+    console.log(`${todo.done ? '✓' : '○'} #${todo.id} ${todo.title}`)
+  }
+}
+
+export async function apply(ctx: Context) {
+  const [command = 'list', ...args] = process.argv.slice(2)
+
+  try {
+    switch (command) {
+      case 'add': {
+        const title = args.join(' ').trim()
+        if (!title) {
+          console.log('用法: add &lt;标题&gt;')
+          return
+        }
+        const todo = await ctx.todoStore.add(title)
+        console.log(`已添加 #${todo.id}: ${todo.title}`)
+        break
+      }
+      case 'done': {
+        const id = Number(args[0])
+        if (!Number.isInteger(id)) {
+          console.log('用法: done &lt;id&gt;')
+          return
+        }
+        const todo = await ctx.todoStore.complete(id)
+        console.log(`已完成 #${todo.id}: ${todo.title}`)
+        break
+      }
+      case 'list': {
+        print(ctx.todoStore.list())
+        break
+      }
+      default:
+        console.log('命令: add &lt;标题&gt; | list | done &lt;id&gt;')
+    }
+  } catch (error) {
+    console.error(`[cli] ${(error as Error).message}`)
+    process.exitCode = 1
+  }
+}</code></pre>
+        </div>
+
+        <p>
+          <code>inject: ['todoStore']</code> 是这一章的关键。它让 CLI 不必关心“存储有没有准备好”，
+          也让“换一个存储实现”不需要改 CLI 的任何一行。
+        </p>
+
+        <h2 id="yml">第 4 步：用 cordis.yml 组装</h2>
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: logger
+  name: '@deepseek-ai/cordis-plugin-logger-console'
+
+- id: store
+  name: './store.ts'
+  config:
+    file: './todos.json'
+
+- id: stats
+  name: './stats.ts'
+
+- id: cli
+  name: './cli.ts'</code></pre>
+        </div>
+
+        <p>
+          <code>logger</code> 不是必需的，但它会把 Cordis 的错误输出到控制台，调试时很有用。
+          其余三个条目分别对应存储、统计、命令行。注意这里没有写任何“启动顺序”，
+          顺序由 <code>inject</code> 推导。
+        </p>
+
+        <h2 id="run">第 5 步：运行它</h2>
+        <p>
+          从 <code>tmp/cordis-guide</code> 目录执行。启动器会创建根上下文、挂载 Loader，并读取当前目录的
+          <code>cordis.yml</code>：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">sh</span></div>
+          <pre><code class="language-sh">node --import tsx ../../vendor/cordis/bin.js add "买牛奶"</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>[store] loaded 0 todos
+[stats] +1 (1) 买牛奶
+已添加 #1: 买牛奶</code></pre>
+        </div>
+
+        <p>再执行几条命令，观察事件与持久化：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">sh</span></div>
+          <pre><code class="language-sh">node --import tsx ../../vendor/cordis/bin.js add "写作业"
+node --import tsx ../../vendor/cordis/bin.js list
+node --import tsx ../../vendor/cordis/bin.js done 2
+node --import tsx ../../vendor/cordis/bin.js list</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>[store] loaded 1 todos
+[stats] +1 (1) 写作业
+已添加 #2: 写作业
+[store] loaded 2 todos
+○ #1 买牛奶
+○ #2 写作业
+[store] loaded 2 todos
+[stats] done #2 写作业
+已完成 #2: 写作业
+[store] loaded 2 todos
+○ #1 买牛奶
+✓ #2 写作业</code></pre>
+        </div>
+
+        <p>
+          注意每次运行都是新进程，所以 <code>[stats]</code> 的计数会重置。要跨进程统计，需要把计数持久化，
+          或者把它放进一个长驻服务。这是“进程生命周期”和“应用生命周期”的区别，值得在设计时想清楚。
+        </p>
+
+        <h2 id="test">第 6 步：写测试</h2>
+        <p>
+          Cordis 的一个隐性好处是可测试性：你可以在测试里创建一个独立的根上下文，挂载真实服务，
+          用临时文件作为数据源，不需要启动 CLI 或整个应用。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">tests/store.test.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { Context } from '@deepseek-ai/cordis'
+import { TodoStore } from '../store.ts'
+
+test('add, complete and persist', async () =&gt; {
+  const dir = await mkdtemp(join(tmpdir(), 'cordis-todo-'))
+  const file = join(dir, 'todos.json')
+  const ctx = new Context()
+
+  try {
+    await ctx.plugin(TodoStore, { file })
+
+    const todo = await ctx.todoStore.add('write tests')
+    assert.equal(todo.id, 1)
+    assert.equal(ctx.todoStore.list().length, 1)
+
+    const done = await ctx.todoStore.complete(1)
+    assert.equal(done.done, true)
+
+    const reloaded = new Context()
+    try {
+      await reloaded.plugin(TodoStore, { file })
+      assert.equal(reloaded.todoStore.list()[0]?.done, true)
+    } finally {
+      await reloaded.fiber.dispose()
+    }
+  } finally {
+    await ctx.fiber.dispose()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('complete rejects unknown id', async () =&gt; {
+  const dir = await mkdtemp(join(tmpdir(), 'cordis-todo-'))
+  const ctx = new Context()
+
+  try {
+    await ctx.plugin(TodoStore, { file: join(dir, 'todos.json') })
+    await assert.rejects(() =&gt; ctx.todoStore.complete(99), /not found/)
+  } finally {
+    await ctx.fiber.dispose()
+    await rm(dir, { recursive: true, force: true })
+  }
+})</code></pre>
+        </div>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">sh</span></div>
+          <pre><code class="language-sh">node --import tsx --test tests/store.test.ts</code></pre>
+        </div>
+
+        <p>
+          测试里没有 mock，也没有启动 Loader。你测的就是真实的服务与真实的文件读写，只是把路径换成了临时目录。
+          这就是“在子上下文里换提供者”的另一种用法：换的是<strong>配置</strong>，而不是实现。
+        </p>
+
+        <h2 id="validate">第 7 步：故意制造一次配置错误</h2>
+        <p>
+          把 <code>cordis.yml</code> 里的 <code>file</code> 改成数字：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">cordis.yml（错误示例）</span><span class="code-lang">yaml</span></div>
+          <pre><code class="language-yaml">- id: store
+  name: './store.ts'
+  config:
+    file: 123</code></pre>
+        </div>
+
+        <p>
+          再次运行，插件会在启动阶段失败，而不是等到写文件时才炸。你会看到 <code>ValidationError</code>，
+          错误信息指出 <code>file</code> 字段期望字符串。修回 <code>'./todos.json'</code> 即可。
+        </p>
+
+        <div class="callout tip">
+          <span class="label">这就是 schema 的价值</span>
+          <p>
+            没有 schema 时，<code>123</code> 会一路传到 <code>readFile</code>，报一个与“配置写错”毫无关系的错误；
+            有 schema 时，错误在入口处就被拦住，并且告诉你哪个字段、期望什么类型。
+          </p>
+        </div>
+
+        <h2 id="package">第 8 步：打包与发布</h2>
+        <p>
+          开发阶段用 <code>tsx</code> 直接跑最方便。要发布给别人用，建议编译成 JavaScript，并用一个自己的
+          <code>main.js</code> 替代仓库里的启动器：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">main.ts（相当于 bin.js 的自写版本）</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
+import { pathToFileURL } from 'node:url'
+
+const ctx = new Context()
+ctx.baseUrl = pathToFileURL(import.meta.dirname).href + '/'
+
+await ctx.plugin(Loader)
+await ctx.loader.create({
+  name: '@deepseek-ai/cordis-plugin-include',
+  config: { path: './cordis.yml' },
+})
+await ctx.loader.await()</code></pre>
+        </div>
+
+        <p>
+          它和 <code>vendor/cordis/bin.js</code> 做的是同一件事：创建根上下文、设置基准路径、挂 Loader、
+          让 Include 读取配置。区别只是 <code>baseUrl</code> 指向项目目录而不是当前工作目录，这样用户从任何地方执行都能找到配置。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">package.json</span><span class="code-lang">json</span></div>
+          <pre><code class="language-json">{
+  "name": "cordis-todo",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "todo": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test tests/store.test.ts"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.0",
+    "@deepseek-ai/cordis-plugin-include": "^1.0.0",
+    "@deepseek-ai/cordis-plugin-loader": "^1.0.0",
+    "@deepseek-ai/schemastery": "^3.0.0"
+  }
+}</code></pre>
+        </div>
+
+        <p>
+          发布时还要把 <code>cordis.yml</code>、编译后的 <code>store.js</code> 等文件一起打包；
+          如果配置里用相对路径，确保它们相对的是打包后的目录。一个更省事的做法是用
+          <code>tsdown</code> / <code>esbuild</code> 打成一个入口文件，把插件模块也包含进去。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">tsconfig.json（最小示例）</span><span class="code-lang">json</span></div>
+          <pre><code class="language-json">{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.ts"]
+}</code></pre>
+        </div>
+
+        <div class="callout warn">
+          <span class="label">版本号只是示例</span>
+          <p>
+            上面的依赖版本是示意，实际请以你安装到的版本为准。Cordis 4.x 的 API 仍可能变化；
+            如果是团队项目，建议锁定版本并在升级时跑一遍测试。
+          </p>
+        </div>
+
+        <h2 id="extend">第 9 步：接下来可以加什么</h2>
+        <div class="chapter-grid">
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">删除与编辑</span></span>
+            <span class="cc-desc">给 store 加 <code>remove</code> / <code>rename</code>，再发一个 <code>todo/removed</code> 事件。CLI 只加一个分支。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">多列表 / 多租户</span></span>
+            <span class="cc-desc">用 <code>isolate: { todoStore: true }</code> 建两个组，各自一个数据文件；CLI 通过参数选择上下文。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">换成 SQLite</span></span>
+            <span class="cc-desc">写一个 <code>SqliteStore extends Service</code>，实现同样的方法；消费者一行不改。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">加 Web API</span></span>
+            <span class="cc-desc">新增一个插件，inject <code>todoStore</code>，把 add / list 暴露成 HTTP 接口。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">加 HMR</span></span>
+            <span class="cc-desc">按第 9 章配置 HMR，改 CLI 提示语后不用重启；同时检验 Effect 是否写对。</span>
+          </div>
+          <div class="chapter-card" style="cursor:default">
+            <span class="cc-top"><span class="cc-title">加撤销 / 重做</span></span>
+            <span class="cc-desc">把每次变更记录成命令对象，store 负责执行与回滚；这是一个更接近真实产品的练习。</span>
+          </div>
+        </div>
+
+        <h2 id="mapping">这个项目用到了什么</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>概念</th><th>在项目里的位置</th><th>作用</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Context</td><td><code>apply(ctx)</code> 的参数</td><td>插件访问服务与事件的入口。</td></tr>
+              <tr><td>Service</td><td><code>TodoStore</code></td><td>把存储能力注册为 <code>todoStore</code>。</td></tr>
+              <tr><td>inject</td><td><code>cli.ts</code></td><td>保证 CLI 在存储就绪后才执行。</td></tr>
+              <tr><td>Event</td><td><code>todo/added</code>、<code>todo/completed</code></td><td>让统计插件与存储解耦。</td></tr>
+              <tr><td>Effect</td><td><code>Service.init</code> 与自动注册</td><td>异步初始化；服务、监听器随 Fiber 卸载。</td></tr>
+              <tr><td>Config</td><td><code>store.ts</code> 的 schema</td><td>校验 <code>file</code>，提供默认值。</td></tr>
+              <tr><td>Loader</td><td><code>cordis.yml</code></td><td>声明式装配，不用改代码。</td></tr>
+              <tr><td>声明合并</td><td><code>declare module</code></td><td>让 <code>ctx.todoStore</code> 与事件名有类型。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>一个完整的 Cordis 程序由“配置 + 若干插件 + 一个启动器”组成。</li>
+            <li>服务负责能力，事件负责通知，inject 负责顺序，Effect 负责清理。</li>
+            <li>schema 让配置错误在启动时暴露；默认值让调用方只写关心的字段。</li>
+            <li>测试可以只创建根上下文、挂载真实服务，用临时目录隔离副作用。</li>
+            <li>替换实现时消费者不用改，这是服务寻址最重要的回报。</li>
+            <li>发布时要处理路径、编译与配置文件打包；开发阶段用 tsx 即可。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>为什么 <code>cli.ts</code> 需要 <code>inject: ['todoStore']</code>，而 <code>stats.ts</code> 不需要？</summary>
+            <div class="answer">
+              <p>
+                CLI 直接调用 <code>ctx.todoStore.add()</code>，必须在存储初始化完成后才能执行，所以声明硬依赖。
+                统计插件只监听事件，不调用服务；即使它先加载，事件发生时它已经在监听了。它不需要等待 store。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>如果要把 JSON 存储换成 SQLite，需要改哪些文件？</summary>
+            <div class="answer">
+              <p>
+                只需要新增一个实现同样方法（<code>add</code> / <code>complete</code> / <code>list</code>）的服务，
+                并在 <code>cordis.yml</code> 里换掉提供者。CLI、统计、事件定义都不需要改。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary><code>store.ts</code> 里的 <code>ctx.plugin(TodoStore, config)</code> 产生的是谁的子插件？卸载时会怎样？</summary>
+            <div class="answer">
+              <p>
+                它产生的是 <code>apply</code> 这个入口插件的子 Fiber。入口插件卸载时，会连同子 Fiber 一起卸载，
+                并等待它的清理完成；<code>TodoStore</code> 的服务注册随之撤销，依赖它的 CLI 也会被卸载。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 11 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

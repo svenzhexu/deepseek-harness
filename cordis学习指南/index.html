@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cordis 学习指南 — 从 main 函数到插件树</title>
+  <meta name="description" content="面向零基础学生的 Cordis 中文学习指南：什么是 Cordis、为什么需要它、它由哪些部分组成，以及如何用它开发自己的程序。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="index">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <noscript>
+      <div class="sidebar-foot">
+        <strong>目录</strong><br>
+        <a href="index.html" style="color:#c4d0dc">首页</a> ·
+        <a href="01-what-is-cordis.html" style="color:#c4d0dc">第 1 章</a> ·
+        <a href="11-build-your-app.html" style="color:#c4d0dc">第 11 章</a>
+      </div>
+    </noscript>
+    <div class="sidebar-foot">
+      <strong>基于 Cordis 4.x</strong><br>
+      共 12 章 · 约 4–6 小时<br>
+      离线可读 · 无需联网
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">开始 · 共 12 章</span>
+        <a href="#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap solo">
+      <main id="main" class="prose index-main">
+        <section class="hero">
+          <div class="hero-copy">
+            <div class="kicker">
+              <span>零基础 · 中文</span><span class="dot"></span>
+              <span class="kicker-muted">写给第一次接触插件框架的你</span>
+            </div>
+            <h1>把程序，<br>长成一棵<span class="accent">插件树</span>。</h1>
+            <p class="lead">
+              Cordis 是 DeepSeek Harness 底层的插件框架。这份指南不假设你懂“依赖注入”，也不要求你是 TypeScript 专家：
+              我们从一段普通的 <code>main</code> 函数出发，先看懂它、再拆开它，最后用它写一个真正能跑起来的小程序。
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="01-what-is-cordis.html">从第 1 章开始 →</a>
+              <a class="btn btn-ghost" href="#outline">先看课程地图</a>
+            </div>
+            <div class="hero-facts">
+              <span><b>12</b> 章 · 5 个部分</span>
+              <span><b>30+</b> 个代码示例</span>
+              <span><b>Node.js 22+</b></span>
+              <span><b>无需</b> 联网</span>
+            </div>
+          </div>
+
+          <div class="hero-art" aria-hidden="true">
+            <span class="hero-float f1">ctx.tools</span>
+            <span class="hero-float f2">fiber.dispose()</span>
+            <span class="hero-float f3">ctx.effect()</span>
+            <div class="terminal">
+              <div class="terminal-bar">
+                <i></i><i></i><i></i>
+                <span>todo — node --import tsx main.ts</span>
+              </div>
+              <pre><span class="p">$</span> node --import tsx main.ts
+<span class="c">[store]</span> 已加载 3 条待办
+<span class="g">[cli]</span>   hello, Cordis
+<span class="y">[stats]</span> todo/added → 1
+<span class="c">[hmr]</span>   检测到改动，正在重载…
+<span class="c">[store]</span> 已加载 3 条待办
+<span class="g">[cli]</span>   ready. 输入 help 查看命令</pre>
+            </div>
+          </div>
+        </section>
+
+        <h2 id="what">一句话说清 Cordis</h2>
+        <p>
+          Cordis 是一个用 TypeScript 写的<strong>插件框架</strong>。它不负责你的业务，而是负责让许多块业务能够
+          <em>安全地拼在一起、随时换掉、热更新，再干净地拆开</em>。
+        </p>
+        <blockquote>
+          <p>
+            Cordis 以 <strong>Context</strong> 为容器，以<strong>插件</strong>为单元，用 <strong>Fiber</strong> 管理生命周期，
+            用 <strong>Service</strong> 和 <strong>Event</strong> 连接协作。
+          </p>
+        </blockquote>
+        <div class="stat-row">
+          <div class="stat">
+            <b>容器</b>
+            <span>所有能力都有一个名字，挂在 <code>ctx</code> 上。插件按名字取用，不直接 import 实现。</span>
+          </div>
+          <div class="stat">
+            <b>生命周期</b>
+            <span>每次挂载产生一个 Fiber；卸载时，这个插件注册过的一切都会自动撤销。</span>
+          </div>
+          <div class="stat">
+            <b>协作</b>
+            <span>服务用于“直接调用”，事件用于“广播通知”；两者都不要求双方互相认识。</span>
+          </div>
+        </div>
+        <p class="small">
+          如果你现在只觉得“好像很抽象”，没关系。第 1 章会从一段没有 Cordis 的代码开始，让你亲眼看到这些词分别在解决什么问题。
+        </p>
+
+        <h2 id="outcomes">读完这份指南，你会……</h2>
+        <div class="learn-box">
+          <span class="label">Learning outcomes</span>
+          <ul>
+            <li>用自己的话解释 Cordis 是什么，以及它<strong>不是</strong>什么；</li>
+            <li>说清 <code>Context</code>、<code>Plugin</code>、<code>Fiber</code>、<code>Service</code>、<code>Event</code>、<code>Effect</code> 各自的职责；</li>
+            <li>看懂一个 Cordis 项目的启动过程，知道插件为什么“没有输出”；</li>
+            <li>写出带依赖声明、配置校验和资源清理的插件；</li>
+            <li>用 <code>cordis.yml</code> 组装应用，并理解 Loader 与 HMR 在做什么；</li>
+            <li>判断什么时候该用 Cordis，什么时候一个 <code>main</code> 函数就够了；</li>
+            <li>独立完成一个可运行的命令行程序，并知道下一步怎么扩展它。</li>
+          </ul>
+        </div>
+
+        <h2 id="outline">课程地图</h2>
+        <p>
+          全书分成五个部分：先建立直觉，再逐个拆开核心概念，然后学会用配置文件组装，接着与“手写 main”正面对照，
+          最后动手做一个自己的程序。每一章都可以单独阅读，但按顺序读最省力。
+        </p>
+
+        <div class="part-title">第一篇 · 认识 Cordis</div>
+        <p class="part-desc">不急着写代码，先弄清楚它为什么存在、整体长什么样。</p>
+        <div class="chapter-grid">
+          <a class="chapter-card" href="01-what-is-cordis.html">
+            <span class="cc-top"><span class="cc-num">01</span><span class="cc-title">什么是 Cordis</span></span>
+            <span class="cc-desc">从一段不断变长的 main 函数出发，看“挂载”与“调用”的根本区别。</span>
+            <span class="cc-foot">约 15 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="02-why-cordis.html">
+            <span class="cc-top"><span class="cc-num">02</span><span class="cc-title">为什么需要 Cordis</span></span>
+            <span class="cc-desc">耦合、顺序、清理、替换、配置、热更新：六个真实痛点与它的答案。</span>
+            <span class="cc-foot">约 15 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="03-mental-model.html">
+            <span class="cc-top"><span class="cc-num">03</span><span class="cc-title">一张图看懂 Cordis</span></span>
+            <span class="cc-desc">三层架构、一次加载的完整时序，以及官方包与 Harness 插件的边界。</span>
+            <span class="cc-foot">约 20 分钟 · 阅读 →</span>
+          </a>
+        </div>
+
+        <div class="part-title">第二篇 · 五个核心概念</div>
+        <p class="part-desc">Context 是容器，Fiber 是生命周期，Service 与 Event 是两种协作方式，Effect 是撤销机制。</p>
+        <div class="chapter-grid">
+          <a class="chapter-card" href="04-context.html">
+            <span class="cc-top"><span class="cc-num">04</span><span class="cc-title">Context：能力面板</span></span>
+            <span class="cc-desc">为什么 <code>ctx</code> 既能当容器、又能当作用域，还能做隔离。</span>
+            <span class="cc-foot">约 20 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="05-plugin-fiber.html">
+            <span class="cc-top"><span class="cc-num">05</span><span class="cc-title">插件与 Fiber</span></span>
+            <span class="cc-desc">三种插件形态、状态机，以及“为什么我的插件一直没启动”。</span>
+            <span class="cc-foot">约 25 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="06-service.html">
+            <span class="cc-top"><span class="cc-num">06</span><span class="cc-title">服务：按名字使用能力</span></span>
+            <span class="cc-desc">用 <code>inject</code> 声明依赖，让加载顺序由关系决定，而不是手写。</span>
+            <span class="cc-foot">约 30 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="07-events.html">
+            <span class="cc-top"><span class="cc-num">07</span><span class="cc-title">事件：互不相识也能协作</span></span>
+            <span class="cc-desc">五种分发模式，以及最容易踩坑的 waterfall 中间件。</span>
+            <span class="cc-foot">约 30 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="08-effect.html">
+            <span class="cc-top"><span class="cc-num">08</span><span class="cc-title">Effect：注册即可撤销</span></span>
+            <span class="cc-desc">定时器、连接、监听器，怎样才能在卸载时一个不漏地收回来。</span>
+            <span class="cc-foot">约 20 分钟 · 阅读 →</span>
+          </a>
+        </div>
+
+        <div class="part-title">第三篇 · 组装应用</div>
+        <p class="part-desc">把“写死在代码里的装配”换成可编辑、可热更新的配置文件。</p>
+        <div class="chapter-grid">
+          <a class="chapter-card" href="09-config-loader.html">
+            <span class="cc-top"><span class="cc-num">09</span><span class="cc-title">配置与 Loader</span></span>
+            <span class="cc-desc"><code>cordis.yml</code>、配置校验、分组、隔离、Include 与 HMR。</span>
+            <span class="cc-foot">约 35 分钟 · 阅读 →</span>
+          </a>
+        </div>
+
+        <div class="part-title">第四篇 · 对照与实战</div>
+        <p class="part-desc">先自己造一个 80 行的迷你框架，再和 Cordis 逐项对照；最后完整做一个程序。</p>
+        <div class="chapter-grid">
+          <a class="chapter-card" href="10-diy-comparison.html">
+            <span class="cc-top"><span class="cc-num">10</span><span class="cc-title">与手写 main 的异同</span></span>
+            <span class="cc-desc">同一个需求，两种写法；看清 Cordis 多做了什么、又贵在哪里。</span>
+            <span class="cc-foot">约 30 分钟 · 阅读 →</span>
+          </a>
+          <a class="chapter-card" href="11-build-your-app.html">
+            <span class="cc-top"><span class="cc-num">11</span><span class="cc-title">实战：开发自己的程序</span></span>
+            <span class="cc-desc">从空目录开始，写一个带服务、事件、配置和 HMR 的待办 CLI。</span>
+            <span class="cc-foot">约 60 分钟 · 动手 →</span>
+          </a>
+        </div>
+
+        <div class="part-title">第五篇 · 附录</div>
+        <p class="part-desc">忘了某个 API 或遇到报错时，回来查这里。</p>
+        <div class="chapter-grid">
+          <a class="chapter-card" href="12-cheatsheet.html">
+            <span class="cc-top"><span class="cc-num">12</span><span class="cc-title">速查表与排错手册</span></span>
+            <span class="cc-desc">API 速查、错误信息对照、术语表、12 道自测题与下一步路线。</span>
+            <span class="cc-foot">约 15 分钟 · 查阅 →</span>
+          </a>
+        </div>
+
+        <h2 id="routes">三条学习路线</h2>
+        <p>不同目标不必从头读到尾。选一条适合你的：</p>
+        <div class="route-grid">
+          <div class="route">
+            <h3>速通 · 先建立直觉</h3>
+            <p>只有 40 分钟，想先知道 Cordis 到底怎么回事。</p>
+            <span class="route-path">01 → 03 → 06 → 11</span>
+          </div>
+          <div class="route">
+            <h3>系统 · 一次学完整</h3>
+            <p>准备在项目里使用 Cordis，愿意花一个下午。</p>
+            <span class="route-path">01 → 02 → … → 12</span>
+          </div>
+          <div class="route">
+            <h3>对照 · 给写过框架的人</h3>
+            <p>已经自己写过容器或插件系统，只想看差异。</p>
+            <span class="route-path">10 → 09 → 07</span>
+          </div>
+        </div>
+
+        <h2 id="conventions">阅读约定</h2>
+        <p>为了让你少迷路，全书使用固定的视觉语言：</p>
+        <ul>
+          <li><strong>代码块</strong>右上角有“复制”按钮；标题栏写着文件名时，表示这是一个完整文件，而不是片段。</li>
+          <li><strong>蓝色提示框</strong>补充概念，<strong>绿色</strong>是实践建议，<strong>橙色</strong>是需要注意的坑，<strong>红色</strong>是常见错误，<strong>紫色</strong>是生活类比，<strong>灰色</strong>是可以暂时跳过的进阶内容。</li>
+          <li>每章末尾有 2–3 道<strong>自测题</strong>，点开才显示答案。先自己想，再点开。</li>
+          <li>带 <code>$</code> 的命令在项目根目录执行；示例输出中的省略号表示“其余输出省略”。</li>
+          <li>术语第一次出现时会给出英文，附录有完整对照表。不要背 API，先理解<strong>因果</strong>。</li>
+        </ul>
+
+        <div class="callout info">
+          <span class="label">包名说明</span>
+          <p>
+            本指南的代码使用本仓库中的包名：<code>@deepseek-ai/cordis</code>、<code>@deepseek-ai/cordis-plugin-loader</code>。
+            它们和上游的 <code>cordis</code>、<code>@cordisjs/plugin-loader</code> 是同一套 API，只是 DeepSeek Harness 把 Cordis
+            vendor（复制进仓库）后改了作用域；<code>@deepseek-ai/schemastery</code> 同理对应上游的 <code>schemastery</code>。
+            你在网上看到的 Cordis 文章若使用上游包名，把名字替换即可，概念完全一致。
+          </p>
+        </div>
+
+        <h2 id="before">开始之前</h2>
+        <p>
+          你不需要会 TypeScript，但最好写过一点点 JavaScript：知道 <code>function</code>、对象、<code>import</code> 和
+          <code>async/await</code> 就够了。遇到陌生语法时，正文会停下来解释；第 1 章也有一张 TypeScript 速览。
+        </p>
+        <p>
+          想跟着敲代码，需要 Node.js 22 以上，以及本仓库已经执行过 <code>pnpm install</code>。如果只是想读懂，直接翻页即可，
+          所有示例都给出了预期输出。
+        </p>
+
+        <div class="callout warn">
+          <span class="label">版本说明</span>
+          <p>
+            本指南基于本仓库 vendor 的 Cordis 4.0（上游 <code>4.0.0-rc.7</code>，包清单版本 <code>4.0.5</code>）。
+            Cordis 仍处于快速演进阶段，个别 API 可能随版本变化；当文字与源码冲突时，以 <code>vendor/cordis/src</code> 为准。
+          </p>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 面向零基础学生的中文教程 · 基于 DeepSeek Harness 仓库内 vendor 的 Cordis 4.x</p>
+      <p>离线 HTML · 无外部依赖 · 可自由用于学习与教学</p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 6 章 · 服务：按名字使用能力 — Cordis 学习指南</title>
+  <meta name="description" content="用 Service 基类、声明合并与 inject 提供服务；理解服务定义、提供者、消费者三角色，以及替换与隔离。">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="06">
+  <div class="reading-progress" id="reading-progress"></div>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">C</span>
+      <span class="brand-text">
+        <span class="brand-title">Cordis 学习指南</span>
+        <span class="brand-sub">ZERO TO PLUGIN TREE</span>
+      </span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="课程目录"></nav>
+    <div class="sidebar-foot">
+      <strong>第二篇 · 核心概念</strong><br>
+      第 6 / 12 章<br>
+      约 30 分钟
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="打开课程目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="topbar-brand" href="index.html">Cordis 学习指南</a>
+      <div class="topbar-meta">
+        <span class="chapter-indicator" id="chapter-indicator">第 6 / 12 章</span>
+        <a href="index.html#outline">课程地图</a>
+      </div>
+    </header>
+
+    <div class="content-wrap">
+      <main id="main" class="prose">
+        <header class="chapter-head">
+          <div class="kicker">
+            <span>第二篇 · 核心概念</span><span class="dot"></span>
+            <span class="kicker-muted">第 06 章</span>
+          </div>
+          <h1>服务：按名字使用能力</h1>
+          <p class="lead">
+            服务是 Cordis 解耦的核心。它把“我依赖某个类”换成“我需要一个叫 db 的能力”，
+            从而让提供者可以被替换、被隔离、被热更新，而消费者一行都不用改。这一章我们从写一个最小的服务开始。
+          </p>
+          <div class="meta-row">
+            <span class="chip"><strong>难度</strong> 入门</span>
+            <span class="chip"><strong>阅读</strong> 约 30 分钟</span>
+            <span class="chip"><strong>前置</strong> 第 4–5 章</span>
+            <span class="chip"><strong>关键词</strong> Service · inject · 声明合并</span>
+          </div>
+        </header>
+
+        <div class="learn-box">
+          <span class="label">本章你将学会</span>
+          <ul>
+            <li>用 <code>Service</code> 基类提供一个具名能力；</li>
+            <li>用声明合并让 <code>ctx.greeter</code> 获得类型；</li>
+            <li>用 <code>inject</code> 让消费者等待提供者就绪；</li>
+            <li>替换提供者、隔离服务实例，并理解为什么消费者不用改。</li>
+          </ul>
+        </div>
+
+        <h2 id="why-name">为什么是“名字”，而不是 import</h2>
+        <p>
+          传统写法里，消费者要使用数据库，就在文件顶部 <code>import { Database } from './db.ts'</code>。
+          这行 import 把消费者和<strong>某一个具体实现</strong>绑死了：换实现、换路径、换构造参数，都要改它。
+        </p>
+        <p>
+          Cordis 的做法是给能力起一个稳定的名字，比如 <code>db</code>。消费者只说“我要 <code>db</code>”，
+          至于 <code>db</code> 是文件、PostgreSQL 还是内存实现，由装配层决定。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>维度</th><th>直接 import</th><th>服务寻址</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>依赖方向</td><td>消费者 → 具体实现</td><td>消费者 → 服务名 ← 提供者</td></tr>
+              <tr><td>替换实现</td><td>改消费者代码</td><td>换提供者即可</td></tr>
+              <tr><td>加载顺序</td><td>调用方负责</td><td>框架按依赖解析</td></tr>
+              <tr><td>测试</td><td>mock 模块或依赖注入</td><td>在子上下文里换提供者</td></tr>
+              <tr><td>多实例</td><td>手动传参</td><td><code>isolate</code> 作用域</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout analogy">
+          <span class="label">类比 · 点菜与厨房</span>
+          <p>
+            消费者是在菜单上点“番茄炒蛋”，不是在厨房里指定“用三号锅、由张师傅做”。菜单上的名字（服务名）稳定，
+            后厨换人、换锅、换供应商（实现），顾客不需要知道。
+          </p>
+        </div>
+
+        <h2 id="first-service">第一个服务</h2>
+        <p>
+          写一个服务只需要三步：继承 <code>Service</code>、在构造函数里 <code>super(ctx, '名字')</code>、把它当插件挂载。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">greeter.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context, Service } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    greeter: GreeterService
+  }
+}
+
+export class GreeterService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'greeter')
+  }
+
+  greet(who: string) {
+    return `Hello, ${who}!`
+  }
+}
+
+const root = new Context()
+await root.plugin(GreeterService)
+
+console.log(root.greeter.greet('Cordis'))</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>Hello, Cordis!</code></pre>
+        </div>
+
+        <p>这段代码里有两个层面同时发生，缺一不可：</p>
+        <ul>
+          <li>
+            <strong>运行时</strong>：<code>super(ctx, 'greeter')</code> 把当前实例注册到 Reflect 服务仓库，名字是 <code>greeter</code>。
+            注册是一个 Effect，归当前 Fiber 所有，插件卸载时自动移除。
+          </li>
+          <li>
+            <strong>编译时</strong>：<code>declare module</code> 块通过声明合并，把 <code>greeter: GreeterService</code>
+            加进 <code>Context</code> 接口。这样 <code>ctx.greeter</code> 才有类型；没有它，运行时仍然能跑，但编辑器会报错。
+          </li>
+        </ul>
+
+        <div class="callout info">
+          <span class="label">为什么用 <code>ctx.plugin(GreeterService)</code> 而不是 <code>new</code></span>
+          <p>
+            <code>Service</code> 的子类本身就是一个“类插件”。<code>ctx.plugin</code> 会为它创建 Fiber、检查依赖、校验配置，
+            再 <code>new</code> 出实例。直接 <code>new GreeterService(root)</code> 会绕过这层生命周期，
+            注册会记在根 Fiber 上，卸载插件时不会自动清理，也容易重复注册。
+          </p>
+        </div>
+
+        <p class="small">
+          包名提醒：如果你使用的是上游包，<code>declare module</code> 的目标要改成 <code>'cordis'</code>；
+          TypeScript 的声明合并按模块说明符精确匹配，写错包名不会报错，但 <code>ctx.greeter</code> 会失去类型。
+        </p>
+
+        <h2 id="consumer">消费者：声明依赖，而不是导入实现</h2>
+        <p>
+          消费者不 import <code>GreeterService</code>，只声明需要 <code>greeter</code> 这个服务：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">consumer.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import type {} from './greeter.ts'
+
+export const name = 'consumer'
+export const inject = ['greeter']
+
+export function apply(ctx: Context) {
+  console.log(ctx.greeter.greet('world'))
+}</code></pre>
+        </div>
+
+        <p>
+          <code>inject</code> 让 Cordis 在服务就绪之前不执行 <code>apply</code>。因此进入函数体时，
+          <code>ctx.greeter</code> 一定可用，不需要判空，也不需要 <code>if (!db) return</code> 之类的防御代码。
+        </p>
+        <p>把两个文件放进同一个应用，顺序无关紧要：</p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">main.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+import { GreeterService } from './greeter.ts'
+import { apply as consumer } from './consumer.ts'
+
+const root = new Context()
+await root.plugin(GreeterService)
+await root.plugin({ inject: ['greeter'], apply: consumer })</code></pre>
+        </div>
+
+        <div class="callout warn">
+          <span class="label">注意 · 依赖是持续跟踪的</span>
+          <p>
+            如果 <code>GreeterService</code> 被卸载，消费者也会被卸载；服务重新出现时，消费者会再次加载。
+            这就是“换实现不用改消费者”的底层机制：消费者不是一次性拿到引用，而是始终跟着服务走。
+          </p>
+        </div>
+
+        <h2 id="seam">服务的三个角色</h2>
+        <p>
+          一个完整的能力接口（capability seam）由三个角色组成。理解这三个角色，比记住 API 更重要：
+        </p>
+
+        <div class="diagram">
+          <div class="flow">
+            <div class="flow-node accent"><b>服务定义</b><small>名字 + 方法语义 + 类型</small></div>
+            <div class="flow-arrow">←</div>
+            <div class="flow-node"><b>提供者</b><small>实现并注册到 ctx</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-node clay"><b>消费者</b><small>inject 后调用方法</small></div>
+          </div>
+          <figcaption>图 6-1　服务定义是双方共同依赖的约定；提供者与消费者彼此不 import。</figcaption>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>角色</th><th>负责</th><th>不该负责</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>服务定义</td>
+                <td>服务名、公开方法、参数与返回类型、语义约定。</td>
+                <td>具体存储方式、网络细节、某个厂商的 SDK。</td>
+              </tr>
+              <tr>
+                <td>提供者</td>
+                <td>创建实例、注册服务、在卸载时释放资源。</td>
+                <td>假设消费者是谁、在什么时候调用。</td>
+              </tr>
+              <tr>
+                <td>消费者</td>
+                <td>声明依赖、调用方法、处理业务。</td>
+                <td>创建提供者、决定用哪个实现。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          三者可以放在同一个包里，也可以分开。DeepSeek Harness 里常见的形式是：服务定义与默认提供者在同一个包，
+          消费者在另一个包；替换实现只需换一个提供者包。
+        </p>
+
+        <h2 id="replace">替换提供者：消费者一行不改</h2>
+        <p>
+          下面这个例子先用内存实现，再用文件实现替换。消费者打印它当前拿到的实现，两次输出不同，代码却完全相同。
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">swap.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context, Service } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    db: { query(): string }
+  }
+}
+
+class MemoryDb extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'db')
+  }
+  query() {
+    return 'memory'
+  }
+}
+
+class FileDb extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'db')
+  }
+  query() {
+    return 'file'
+  }
+}
+
+const root = new Context()
+let provider = await root.plugin(MemoryDb)
+
+const consumer = await root.plugin(Object.assign((ctx: Context) =&gt; {
+  console.log('using', ctx.db.query())
+}, { inject: ['db'] }))
+
+await provider.dispose()
+provider = await root.plugin(FileDb)
+await consumer</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>using memory
+using file</code></pre>
+        </div>
+
+        <p>注意这里发生的三件事：</p>
+        <ol>
+          <li><code>provider.dispose()</code> 移除了 <code>db</code> 服务；</li>
+          <li>Cordis 发现消费者依赖 <code>db</code>，把它卸载，清理它注册的东西；</li>
+          <li><code>FileDb</code> 注册后，消费者被重新加载，再次执行 <code>apply</code>。</li>
+        </ol>
+        <p>
+          消费者没有重新 import，也没有重新创建，它只是“重新加载”了。这正是声明式依赖的价值：
+          <strong>消费者描述“我需要什么”，而不描述“我从哪里拿”。</strong>
+        </p>
+
+        <h2 id="isolate">多实例：同一服务名，不同实现</h2>
+        <p>
+          有一种常见误解：服务名是全局的，所以一个应用只能有一个 <code>db</code>。其实不是。
+          通过 <code>isolate</code>，你可以在同一棵插件树里创建多个互不干扰的作用域：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">tenants.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context } from '@deepseek-ai/cordis'
+
+const root = new Context()
+
+const tenantA = root.isolate('db')
+const tenantB = root.isolate('db')
+
+await tenantA.plugin(MemoryDb)
+await tenantB.plugin(FileDb)
+
+tenantA.plugin(Object.assign((ctx: Context) =&gt; {
+  console.log('tenant A:', ctx.db.query())
+}, { inject: ['db'] }))
+
+tenantB.plugin(Object.assign((ctx: Context) =&gt; {
+  console.log('tenant B:', ctx.db.query())
+}, { inject: ['db'] }))</code></pre>
+        </div>
+
+        <div class="code-card output">
+          <div class="code-head"><span class="code-file">终端</span><span class="code-lang">output</span></div>
+          <pre><code>tenant A: memory
+tenant B: file</code></pre>
+        </div>
+
+        <p>
+          这正是多租户、测试替身、按环境切换实现的基础。Loader 的 <code>isolate</code> 配置只是把这个 API 搬到了
+          YAML 里，见第 9 章。
+        </p>
+
+        <h2 id="optional">可选依赖与降级</h2>
+        <p>
+          不是所有依赖都是硬性的。比如“有通知服务就发通知，没有就只写日志”。这种情况下不要写
+          <code>inject</code>，用 <code>ctx.get</code>：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">optional.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">export function apply(ctx: Context) {
+  const notifier = ctx.get('notifier')
+  if (notifier) {
+    notifier.send('hello')
+  } else {
+    console.log('no notifier, fallback to log')
+  }
+}</code></pre>
+        </div>
+
+        <div class="callout danger">
+          <span class="label">不要把可选依赖缓存起来</span>
+          <p>
+            <code>ctx.get</code> 拿到的值可能随时因为提供者卸载而失效。不要把它存到模块级变量里、也不要在一次操作之外复用。
+            <strong>每次用到时重新获取</strong>，或者干脆声明为硬依赖，让 Cordis 帮你管理生命周期。
+          </p>
+        </div>
+
+        <h2 id="advanced">Service 的进阶能力</h2>
+        <p>下面这些先了解“存在”，需要时再回来看：</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>能力</th><th>写法</th><th>用途</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>异步初始化</td>
+                <td><code>[Service.init]()</code></td>
+                <td>构造函数之后运行，可异步；常用于建立连接。抛出则插件 FAILED。</td>
+              </tr>
+              <tr>
+                <td>可用性判断</td>
+                <td><code>[Service.check]()</code></td>
+                <td>返回 false 时，依赖它的插件继续保持 PENDING。</td>
+              </tr>
+              <tr>
+                <td>可调用服务</td>
+                <td><code>[Service.invoke](...)</code></td>
+                <td>让 <code>ctx.logger(...)</code> 这种“服务也是函数”的写法成立。</td>
+              </tr>
+              <tr>
+                <td>配置拦截</td>
+                <td><code>[Service.config]</code></td>
+                <td>声明服务接受的 intercept 配置类型。</td>
+              </tr>
+              <tr>
+                <td>实例派生</td>
+                <td><code>[Service.extend](props)</code></td>
+                <td>基于当前服务创建带额外属性的视图，框架内部使用。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>
+          其中“异步初始化”最实用。如果你的服务需要连接数据库、拉取远程配置，不要把这些工作塞进构造函数，
+          而是放到 <code>[Service.init]</code>：
+        </p>
+
+        <div class="code-card">
+          <div class="code-head"><span class="code-file">async-service.ts</span><span class="code-lang">ts</span></div>
+          <pre><code class="language-ts">import { Context, Service } from '@deepseek-ai/cordis'
+
+// 省略 Connection 接口与 connect() 的实现
+class Database extends Service {
+  private connection?: Connection
+
+  constructor(ctx: Context) {
+    super(ctx, 'db')
+  }
+
+  async [Service.init]() {
+    this.connection = await connect()
+    return () =&gt; this.connection?.close()
+  }
+
+  query(sql: string) {
+    return this.connection!.query(sql)
+  }
+}</code></pre>
+        </div>
+
+        <p>
+          返回的函数会被当作这个服务的清理逻辑。这样“连接建立”和“连接关闭”仍然成对出现，
+          而且建立失败会让 Fiber 进入 FAILED，不会留下半初始化状态。
+        </p>
+
+        <h2 id="naming">命名与边界</h2>
+        <ul>
+          <li><strong>服务名是扁平的。</strong> 所有插件共享一个命名空间，<code>tools</code>、<code>llm</code> 这种普通名字很容易冲突，建议加前缀，如 <code>myapp/store</code> 不是合法标识符，通常用 <code>myappStore</code> 或 <code>todoStore</code>。</li>
+          <li><strong>一个名字只对应一个实现。</strong> 同一作用域重复注册会抛错；需要多实例就 <code>isolate</code>。</li>
+          <li><strong>服务不是全局单例。</strong> 它的生命周期跟着 Fiber 走；Fiber 卸载，服务就消失。</li>
+          <li><strong>服务适合“共享能力”，不适合“每次调用的数据”。</strong> 一次请求的上下文用参数传，不要塞进服务。</li>
+        </ul>
+
+        <div class="callout tip">
+          <span class="label">设计服务时问三个问题</span>
+          <p>
+            ① 这个能力需要被多个插件使用吗？② 它可能需要被替换实现吗？③ 它有需要释放的资源吗？
+            三个里有一个“是”，就值得做成服务；如果都没有，一个普通函数或纯对象可能更合适。
+          </p>
+        </div>
+
+        <div class="summary">
+          <h2>本章小结</h2>
+          <ul>
+            <li>服务 = 名字 + 约定 + 实现；消费者依赖名字，不依赖具体类。</li>
+            <li><code>Service</code> 子类在构造函数里 <code>super(ctx, name)</code> 注册，生命周期归 Fiber。</li>
+            <li>声明合并只负责类型，不生成运行时代码。</li>
+            <li><code>inject</code> 是硬依赖，<code>ctx.get</code> 是可选依赖；两者对“提供者消失”的反应不同。</li>
+            <li>替换提供者时，消费者会自动卸载并重载，代码不用改。</li>
+            <li><code>isolate</code> 让同一服务名在多个分支里拥有不同实例。</li>
+          </ul>
+        </div>
+
+        <h2 id="quiz">自测一下</h2>
+        <div class="quiz">
+          <details>
+            <summary>为什么消费者不应该 import 提供者的类？</summary>
+            <div class="answer">
+              <p>
+                因为那会在编译期把消费者绑定到某个具体实现，替换实现、测试替身、多租户隔离都会变得困难。
+                消费者应该只依赖服务名和服务定义（类型/接口），由装配层决定用哪个提供者。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary><code>super(ctx, 'db')</code> 做了哪几件事？</summary>
+            <div class="answer">
+              <p>
+                它把当前实例注册为名为 <code>db</code> 的服务，记录所属 Fiber，并通过 Effect 绑定生命周期；
+                同时设置 <code>this.ctx</code> 和 <code>this.name</code>，让服务方法可以通过 <code>this.ctx</code>
+                使用其他服务。若服务是可调用形式，还会创建可调用的代理。
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>提供者被卸载后，消费者会怎样？如果希望它继续运行，应该怎么写？</summary>
+            <div class="answer">
+              <p>
+                如果消费者把 <code>db</code> 写在 <code>inject</code> 里，它会随之卸载，等服务恢复后再重载。
+                如果希望它继续运行，就不要 inject，改用 <code>ctx.get('db')</code> 并在每次使用时判断，同时接受“能力可能暂时不可用”的降级逻辑。
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <nav class="pager" id="pager" aria-label="章节翻页"></nav>
+      </main>
+
+      <aside class="toc" id="toc" aria-label="本章目录">
+        <div class="toc-title">本章目录</div>
+        <ol id="toc-list"></ol>
+      </aside>
+    </div>
+
+    <footer class="site-foot">
+      <p>Cordis 学习指南 · 第 6 章 · <a href="index.html">返回目录</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
